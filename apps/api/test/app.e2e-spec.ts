@@ -1,4 +1,5 @@
 import { INestApplication } from '@nestjs/common';
+import ExcelJS from 'exceljs';
 import { Test } from '@nestjs/testing';
 import request from 'supertest';
 import { DataSource } from 'typeorm';
@@ -145,5 +146,78 @@ describe('Phase 1 API (e2e)', () => {
       .set('Cookie', adminCookie)
       .send({ name: 'x', hacked: true })
       .expect(400);
+  });
+
+  describe('ERP product import', () => {
+    const header = ['Zone', 'Category', 'Brand', 'Product name', 'Size', 'Color', 'Unit'];
+    const workbook = async (rows: string[][]) => {
+      const wb = new ExcelJS.Workbook();
+      wb.addWorksheet('Export').addRows([header, ...rows]);
+      return Buffer.from(await wb.xlsx.writeBuffer());
+    };
+    const upload = (file: Buffer, cookie = adminCookie) =>
+      request(app.getHttpServer()).post('/products/import').set('Cookie', cookie).attach('file', file, 'export.xlsx');
+
+    it('creates products shared across brands, with regions and loads', async () => {
+      const res = await upload(
+        await workbook([
+          ['Riyadh', 'Grey Cement', 'City Cement', '\uFEFFCity Cement - OPC', '', '', '580 Bags'],
+          ['Riyadh', 'Grey Cement', 'City Cement', 'City Cement - OPC', '', '', '600 Pallet'],
+          ['Dammam', 'Grey Cement', 'Eastern Cement', 'Eastern Cement - OPC', '', 'Grey', 'Bags'],
+          ['Riyadh', 'Steel', 'Rajhi Steel', 'Rajhi, Steel Rebar, Grade 60, D:12mm, L:12 M', '', '', 'Ton'],
+          ['', '', '', '', '', '', ''],
+          ['Applied filters:', '', '', '', '', '', ''],
+        ]),
+      ).expect(201);
+      expect(res.body).toMatchObject({ rows: 4, items: 3, productsCreated: 2, variantsCreated: 3, zones: 4 });
+
+      const variants = await request(app.getHttpServer()).get('/variants').set('Cookie', adminCookie).expect(200);
+      const opc = variants.body.filter((v: any) => v.product.name === 'OPC');
+      expect(opc.map((v: any) => v.brand.name).sort()).toEqual(['City Cement', 'Eastern Cement']);
+      const city = opc.find((v: any) => v.brand.name === 'City Cement');
+      expect(city).toMatchObject({ unit: 'BAG', minQty: null, erpName: 'City Cement - OPC' });
+      expect(city.zones.map((z: any) => [z.zone, z.label, z.loadQty])).toEqual([
+        ['Riyadh', '580 Bags', 580],
+        ['Riyadh', '600 Pallet', 600],
+      ]);
+    });
+
+    it('re-imports without losing the admin\'s minimum quantity, status or product name', async () => {
+      const list = await request(app.getHttpServer()).get('/variants').set('Cookie', adminCookie);
+      const rebar = list.body.find((v: any) => v.erpName?.startsWith('Rajhi, Steel Rebar'));
+      await request(app.getHttpServer())
+        .patch(`/variants/${rebar.id}`).set('Cookie', adminCookie).send({ minQty: 25, isActive: false }).expect(200);
+      await request(app.getHttpServer())
+        .patch(`/products/${rebar.productId}`).set('Cookie', adminCookie).send({ name: 'حديد G60 12مم' }).expect(200);
+
+      const res = await upload(
+        await workbook([
+          ['Riyadh', 'Steel', 'Rajhi Steel', 'Rajhi, Steel Rebar, Grade 60, D:12mm, L:12 M', '', '', 'Ton'],
+          ['Qassim', 'Steel', 'Rajhi Steel', 'Rajhi, Steel Rebar, Grade 60, D:12mm, L:12 M', '', '', 'Ton'],
+        ]),
+      ).expect(201);
+      expect(res.body).toMatchObject({ variantsCreated: 0, variantsUpdated: 1, productsCreated: 0, notInFile: 2 });
+
+      const all = await request(app.getHttpServer())
+        .get('/variants?includeInactive=true').set('Cookie', adminCookie);
+      const after = all.body.find((v: any) => v.id === rebar.id);
+      expect(after).toMatchObject({ minQty: 25, isActive: false, product: { name: 'حديد G60 12مم' } });
+      expect(after.zones.map((z: any) => z.zone)).toEqual(['Qassim', 'Riyadh']);
+    });
+
+    it('rejects other files, missing columns and non-admins', async () => {
+      await upload(Buffer.from('not a workbook')).expect(400);
+      const wb = new ExcelJS.Workbook();
+      wb.addWorksheet('x').addRow(['Name', 'Price']);
+      const res = await upload(Buffer.from(await wb.xlsx.writeBuffer())).expect(400);
+      expect(res.body.message).toMatch(/Missing columns/);
+      await request(app.getHttpServer()).post('/products/import').set('Cookie', adminCookie).expect(400);
+
+      await request(app.getHttpServer())
+        .post('/users').set('Cookie', adminCookie)
+        .send({ name: 'Rep C', email: 'c@test.com', password: 'rep-pass-123', role: 'REP' }).expect(201);
+      const rep = (await login('c@test.com', 'rep-pass-123')).get('Set-Cookie')!;
+      await upload(await workbook([]), rep).expect(403);
+    });
   });
 });

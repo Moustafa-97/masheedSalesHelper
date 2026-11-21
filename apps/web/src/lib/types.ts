@@ -36,7 +36,7 @@ export interface Client {
   createdAt: string;
 }
 
-export type Unit = "TON" | "BAG" | "M3" | "PIECE" | "KG" | "METER";
+export type Unit = "TON" | "BAG" | "M3" | "PIECE" | "KG" | "METER" | "GALLON" | "TRAILER";
 
 export interface Brand {
   id: string;
@@ -59,7 +59,29 @@ export interface Variant {
   brand: Brand | null;
   spec: string;
   unit: Unit;
-  minQty: number;
+  minQty: number | null;
   supplierName: string | null;
   isActive: boolean;
+  erpName: string | null;
+  colors: string[];
+  zones: VariantZone[];
+}
+
+export interface VariantZone {
+  id: string;
+  zone: string;
+  /** ERP unit text, e.g. "580 Bags" */
+  label: string;
+  loadQty: number | null;
+}
+
+export interface ImportSummary {
+  rows: number;
+  items: number;
+  brandsCreated: number;
+  productsCreated: number;
+  variantsCreated: number;
+  variantsUpdated: number;
+  zones: number;
+  notInFile: number;
 }

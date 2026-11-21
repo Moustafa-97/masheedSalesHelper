@@ -13,11 +13,13 @@ export async function api<T = unknown>(
   init: Omit<RequestInit, "body"> & { body?: unknown } = {},
 ): Promise<T> {
   const { body, headers, ...rest } = init;
+  // FormData (file uploads) goes as multipart; the browser sets the boundary header.
+  const isForm = typeof FormData !== "undefined" && body instanceof FormData;
   const res = await fetch(`/api${path}`, {
     ...rest,
     credentials: "same-origin",
-    headers: { ...(body !== undefined ? { "Content-Type": "application/json" } : {}), ...headers },
-    body: body !== undefined ? JSON.stringify(body) : undefined,
+    headers: { ...(body !== undefined && !isForm ? { "Content-Type": "application/json" } : {}), ...headers },
+    body: body === undefined ? undefined : isForm ? body : JSON.stringify(body),
   });
 
   if (res.status === 401 && typeof window !== "undefined" && !path.startsWith("/auth/login")) {

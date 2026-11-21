@@ -9,6 +9,8 @@ Sales tracking for reps: clients and credit limits, products, orders, collection
 
 **Phase 1 (done):** sign-in by email or mobile, roles (admin / rep / client), users, clients with credit terms (reps see only their own clients; credit terms are admin-only), product catalogue (product + brand + size, unit, minimum quantity), Arabic/English.
 
+**Product catalogue:** Products → **Import products file** (admin) reads Masheed's ERP export (`Zone, Category, Brand, Product name, Size, Color, Unit`). Names are shortened and grouped across brands (e.g. every brand's *Rebar G60 · 12mm · 12m*), each item keeps its regions and truck loads (`580 Bags`, `600 Pallet`, …), and importing a newer export updates the file's data without touching minimum quantities, active flags or renamed products.
+
 Next: orders (credit check, WhatsApp message, PO, documents) → collections, cheques, guarantees and email alerts → quotations with PDF export → lost deals and market prices → client portal → admin dashboard and deployment.
 
 ## Run it on Windows
@@ -29,7 +31,7 @@ copy apps\api\.env.example apps\api\.env
 # web settings
 copy apps\web\.env.example apps\web\.env.local
 
-# create the tables and your admin account (add :demo for sample clients and products)
+# create the tables and your admin account (add :demo for sample clients)
 npm run seed:demo
 
 # in two terminals

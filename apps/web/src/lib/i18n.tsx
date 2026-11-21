@@ -96,6 +96,29 @@ const ar = {
   deactivate: "إيقاف",
   activate: "تفعيل",
   passwordMin: "8 حروف على الأقل",
+  "unit.GALLON": "جالون",
+  "unit.TRAILER": "تريلا",
+  region: "المنطقة",
+  allRegions: "كل المناطق",
+  allCategories: "كل الفئات",
+  allBrands: "كل البراندات",
+  searchProducts: "ابحث باسم المنتج أو المقاس",
+  loads: "التحميل",
+  colors: "الألوان",
+  notSet: "مش محدد",
+  showInactive: "اعرض المتوقف",
+  importErp: "استيراد ملف المنتجات",
+  importHint: "ملف Excel المصدّر من الـ ERP (Zone, Category, Brand, Product name, Color, Unit)",
+  importing: "جاري الاستيراد…",
+  importDone: "تم الاستيراد",
+  importSummary: "{items} صنف من {rows} سطر: {created} جديد، {updated} اتحدّث، {products} منتج جديد. {notInFile} صنف قديم مش موجود في الملف، وفضلوا زي ما هم.",
+  erpName: "الاسم في الـ ERP",
+  renameProduct: "تعديل اسم المنتج",
+  renameHint: "الاسم ده مشترك بين كل البراندات اللي تحت المنتج",
+  addManually: "إضافة يدوي",
+  itemsCount: "{n} صنف",
+  "load.pallet": "على بالتات",
+  minQtyClear: "سيبها فاضية لو مفيش حد أدنى",
 } as const;
 
 export type MessageKey = keyof typeof ar;
@@ -193,6 +216,29 @@ const en: Record<MessageKey, string> = {
   deactivate: "Deactivate",
   activate: "Activate",
   passwordMin: "At least 8 characters",
+  "unit.GALLON": "Gallon",
+  "unit.TRAILER": "Trailer",
+  region: "Region",
+  allRegions: "All regions",
+  allCategories: "All categories",
+  allBrands: "All brands",
+  searchProducts: "Search by product or size",
+  loads: "Loads",
+  colors: "Colours",
+  notSet: "Not set",
+  showInactive: "Show inactive",
+  importErp: "Import products file",
+  importHint: "Excel export from the ERP (Zone, Category, Brand, Product name, Color, Unit)",
+  importing: "Importing…",
+  importDone: "Import done",
+  importSummary: "{items} items from {rows} rows: {created} new, {updated} updated, {products} new products. {notInFile} earlier items are not in this file and were left as they are.",
+  erpName: "ERP name",
+  renameProduct: "Rename product",
+  renameHint: "This name is shared by every brand under the product",
+  addManually: "Add manually",
+  itemsCount: "{n} items",
+  "load.pallet": "palletised",
+  minQtyClear: "Leave empty for no minimum",
 };
 
 const dictionaries: Record<Locale, Record<MessageKey, string>> = { ar, en };
@@ -205,7 +251,13 @@ export function I18nProvider({ locale, children }: { locale: Locale; children: R
 
 export function useI18n() {
   const locale = useContext(I18nContext);
-  const t = useCallback((key: MessageKey) => dictionaries[locale][key] ?? key, [locale]);
+  const t = useCallback(
+    (key: MessageKey, vars?: Record<string, string | number>) => {
+      const text: string = dictionaries[locale][key] ?? key;
+      return vars ? text.replace(/\{(\w+)\}/g, (m, k) => (k in vars ? String(vars[k]) : m)) : text;
+    },
+    [locale],
+  );
   /** Switches language: stores it in a cookie and reloads so the whole page flips direction. */
   const setLocale = useCallback((next: Locale) => {
     document.cookie = `locale=${next}; path=/; max-age=31536000; samesite=lax`;
