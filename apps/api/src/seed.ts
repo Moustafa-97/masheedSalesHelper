@@ -6,12 +6,12 @@ import 'dotenv/config';
 import { DataSource, IsNull } from 'typeorm';
 import { hashPassword, normalizePhone } from './auth/password.js';
 import { Client, ClientStatus } from './clients/client.entity.js';
-import { databaseOptions } from './database/options.js';
+import { databaseOptions, migrationUrl } from './database/options.js';
 import { Brand, Product, ProductVariant, Unit } from './products/product.entities.js';
 import { Role, User } from './users/user.entity.js';
 
 const demo = process.argv.includes('--demo');
-const ds = new DataSource(databaseOptions());
+const ds = new DataSource(databaseOptions(migrationUrl()));
 await ds.initialize();
 await ds.runMigrations();
 

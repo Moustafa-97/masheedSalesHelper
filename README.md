@@ -15,7 +15,7 @@ Next: orders (credit check, WhatsApp message, PO, documents) → collections, ch
 
 Requirements: **Node.js 22 or newer** and a **PostgreSQL 16** database. Either:
 - install PostgreSQL for Windows (https://www.postgresql.org/download/windows/) and create a database, or
-- create a free database on Neon (https://neon.tech) and copy its connection string (then set `DATABASE_SSL=true`).
+- use a free Neon database (https://neon.tech): see **Neon** below.
 
 ```powershell
 git clone https://github.com/Moustafa-97/masheedSalesHelper.git
@@ -38,6 +38,20 @@ npm run dev:web
 ```
 
 Open http://localhost:3000 and sign in with `ADMIN_EMAIL` / `ADMIN_PASSWORD`.
+
+## Neon
+
+Run the Neon CLI inside `apps\api` (that is where the API reads its `.env`):
+
+```powershell
+cd apps\api
+npx neon@latest init -y --org-id <org-id> --project-id <project-id> --branch production --services postgres
+npx neon@latest deploy
+```
+
+`deploy` writes `DATABASE_URL` (pooled) and `DATABASE_URL_UNPOOLED` (direct) into `apps\api\.env`. You can instead copy both connection strings from the Neon console (Connect → "Connection pooling" on, then off). The API uses the pooled URL; migrations and `npm run seed` use the direct one. Neon URLs carry `sslmode=require`, so leave `DATABASE_SSL=false`.
+
+The database holds only text and numbers. Uploaded files (POs, delivery notes, cheque images) will go to file storage, not into Postgres.
 
 ## Tests
 

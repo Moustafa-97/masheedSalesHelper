@@ -3,7 +3,7 @@
   "private": true,
   "description": "Sales tracking for reps: clients, credit, orders, collections, quotations.",
   "scripts": {
-    "install:all": "npm --prefix apps/api install && npm --prefix apps/web install",
+    "install:all": "cd apps/api && npm install && cd ../web && npm install",
     "dev:api": "npm --prefix apps/api run start:dev",
     "dev:web": "npm --prefix apps/web run dev",
     "seed": "npm --prefix apps/api run seed",
@@ -11,5 +11,7 @@
     "test:api": "npm --prefix apps/api run test:e2e",
     "build": "npm --prefix apps/api run build && npm --prefix apps/web run build"
   },
-  "engines": { "node": ">=22" }
+  "engines": {
+    "node": ">=22"
+  }
 }
