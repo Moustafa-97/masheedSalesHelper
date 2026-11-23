@@ -8,6 +8,8 @@ export class ApiError extends Error {
 }
 
 /** Calls the NestJS API through the /api rewrite. Throws ApiError on non-2xx. */
+let redirecting = false;
+
 export async function api<T = unknown>(
   path: string,
   init: Omit<RequestInit, "body"> & { body?: unknown } = {},
@@ -23,7 +25,12 @@ export async function api<T = unknown>(
   });
 
   if (res.status === 401 && typeof window !== "undefined" && !path.startsWith("/auth/login")) {
-    window.location.href = `/login?next=${encodeURIComponent(window.location.pathname)}`;
+    // Drop the rejected cookie first; otherwise /login sees it and sends us back here in a loop.
+    if (!redirecting) {
+      redirecting = true;
+      await fetch("/api/auth/logout", { method: "POST", credentials: "same-origin" }).catch(() => undefined);
+      window.location.replace(`/login?next=${encodeURIComponent(window.location.pathname)}`);
+    }
   }
   if (!res.ok) {
     let message = res.statusText;

@@ -8,7 +8,7 @@ import {
 import { Reflector } from '@nestjs/core';
 import { JwtService } from '@nestjs/jwt';
 import { InjectRepository } from '@nestjs/typeorm';
-import type { Request } from 'express';
+import type { Request, Response } from 'express';
 import { Repository } from 'typeorm';
 import { IS_PUBLIC, ROLES } from '../common/auth.decorators.js';
 import { Role, User } from '../users/user.entity.js';
@@ -36,15 +36,22 @@ export class AuthGuard implements CanActivate {
     const token = this.extractToken(request);
     if (!token) throw new UnauthorizedException();
 
+    // A cookie that no longer works (expired, wrong secret, user deleted or deactivated, or from
+    // another database) is removed, so the web app's "signed in" check doesn't keep bouncing to /login.
+    const reject = () => {
+      context.switchToHttp().getResponse<Response>().clearCookie(AUTH_COOKIE, { path: '/' });
+      return new UnauthorizedException();
+    };
+
     let payload: { sub: string };
     try {
       payload = await this.jwt.verifyAsync(token);
     } catch {
-      throw new UnauthorizedException();
+      throw reject();
     }
 
     const user = await this.users.findOneBy({ id: payload.sub, isActive: true });
-    if (!user) throw new UnauthorizedException();
+    if (!user) throw reject();
     request.user = user;
 
     const roles = this.reflector.getAllAndOverride<Role[] | undefined>(ROLES, targets);

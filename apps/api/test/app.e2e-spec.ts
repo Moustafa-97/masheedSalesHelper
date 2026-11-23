@@ -148,6 +148,19 @@ describe('Phase 1 API (e2e)', () => {
       .expect(400);
   });
 
+  it('clears the cookie of a user who no longer exists or is deactivated', async () => {
+    const created = await request(app.getHttpServer())
+      .post('/users').set('Cookie', adminCookie)
+      .send({ name: 'Rep Gone', email: 'gone@test.com', password: 'rep-pass-123', role: 'REP' }).expect(201);
+    const cookie = (await login('gone@test.com', 'rep-pass-123')).get('Set-Cookie')!;
+    await request(app.getHttpServer()).get('/auth/me').set('Cookie', cookie).expect(200);
+
+    await request(app.getHttpServer())
+      .patch(`/users/${created.body.id}`).set('Cookie', adminCookie).send({ isActive: false }).expect(200);
+    const res = await request(app.getHttpServer()).get('/auth/me').set('Cookie', cookie).expect(401);
+    expect(res.get('Set-Cookie')?.join(';')).toMatch(/access_token=;.*Expires=Thu, 01 Jan 1970/);
+  });
+
   describe('ERP product import', () => {
     const header = ['Zone', 'Category', 'Brand', 'Product name', 'Size', 'Color', 'Unit'];
     const workbook = async (rows: string[][]) => {
