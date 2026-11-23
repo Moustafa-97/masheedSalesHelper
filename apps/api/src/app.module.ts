@@ -5,6 +5,7 @@ import { AuthModule } from './auth/auth.module.js';
 import { ClientsModule } from './clients/clients.module.js';
 import { Public } from './common/auth.decorators.js';
 import { databaseOptions } from './database/options.js';
+import { OrdersModule } from './orders/orders.module.js';
 import { ProductsModule } from './products/products.module.js';
 import { UsersModule } from './users/users.module.js';
 
@@ -31,6 +32,7 @@ class HealthController {
     UsersModule,
     ClientsModule,
     ProductsModule,
+    OrdersModule,
   ],
   controllers: [HealthController],
 })

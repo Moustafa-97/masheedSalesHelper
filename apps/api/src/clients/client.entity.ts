@@ -52,7 +52,7 @@ export class Client {
   @Column({ type: 'varchar', length: 20, nullable: true })
   vatNumber: string | null;
 
-  /** Credit period added to the invoice date to get the due date (30/45/60). */
+  /** Credit period added to the order date to get the due date (30/45/60). 0 = cash. */
   @Column({ type: 'int', default: 0 })
   paymentTermsDays: number;
 

@@ -1,10 +1,39 @@
 import type { DataSourceOptions } from 'typeorm';
 import { Client } from '../clients/client.entity.js';
 import { migrations } from '../migrations/index.js';
+import {
+  ClientProject,
+  Delivery,
+  DeliveryLine,
+  Order,
+  OrderDocument,
+  OrderEvent,
+  OrderLine,
+  Payment,
+  SalesInvoice,
+  StoredFile,
+} from '../orders/order.entities.js';
 import { Brand, Product, ProductVariant, VariantZone } from '../products/product.entities.js';
 import { User } from '../users/user.entity.js';
 
-export const entities = [User, Client, Brand, Product, ProductVariant, VariantZone];
+export const entities = [
+  User,
+  Client,
+  Brand,
+  Product,
+  ProductVariant,
+  VariantZone,
+  StoredFile,
+  ClientProject,
+  Order,
+  OrderLine,
+  OrderDocument,
+  Delivery,
+  DeliveryLine,
+  SalesInvoice,
+  Payment,
+  OrderEvent,
+];
 
 /**
  * Connection string for schema work (migrations, seed, TypeORM CLI).
