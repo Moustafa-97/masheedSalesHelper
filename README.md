@@ -1,1 +1,64 @@
 # masheedSalesHelper
+
+Sales tracking for reps: clients and credit limits, products, orders, collections and cheques, quotations, lost deals, and a client portal.
+
+- `apps/api`: NestJS 12 + TypeORM + PostgreSQL (port 4000)
+- `apps/web`: Next.js 16 + Tailwind, Arabic (RTL) and English (port 3000). The browser only talks to the web app; `/api/*` is forwarded to the API.
+
+## Status
+
+**Phase 1 (done):** sign-in by email or mobile, roles (admin / rep / client), users, clients with credit terms (reps see only their own clients; credit terms are admin-only), product catalogue (product + brand + size, unit, minimum quantity), Arabic/English.
+
+**Product catalogue:** Products → **Import products file** (admin) reads Masheed's ERP export (`Zone, Category, Brand, Product name, Size, Color, Unit`). Names are shortened and grouped across brands (e.g. every brand's *Rebar G60 · 12mm · 12m*), each item keeps its regions and truck loads (`580 Bags`, `600 Pallet`, …), and importing a newer export updates the file's data without touching minimum quantities, active flags or renamed products.
+
+Next: orders (credit check, WhatsApp message, PO, documents) → collections, cheques, guarantees and email alerts → quotations with PDF export → lost deals and market prices → client portal → admin dashboard and deployment.
+
+## Run it on Windows
+
+Requirements: **Node.js 22 or newer** and a **PostgreSQL 16** database. Either:
+- install PostgreSQL for Windows (https://www.postgresql.org/download/windows/) and create a database, or
+- use a free Neon database (https://neon.tech): see **Neon** below.
+
+```powershell
+git clone https://github.com/Moustafa-97/masheedSalesHelper.git
+cd masheedSalesHelper
+npm run install:all
+
+# API settings
+copy apps\api\.env.example apps\api\.env
+# edit apps\api\.env: DATABASE_URL, JWT_SECRET (32+ characters), ADMIN_EMAIL, ADMIN_PASSWORD
+
+# web settings
+copy apps\web\.env.example apps\web\.env.local
+
+# create the tables and your admin account (add :demo for sample clients)
+npm run seed:demo
+
+# in two terminals
+npm run dev:api
+npm run dev:web
+```
+
+Open http://localhost:3000 and sign in with `ADMIN_EMAIL` / `ADMIN_PASSWORD`.
+
+## Neon
+
+Run the Neon CLI inside `apps\api` (that is where the API reads its `.env`):
+
+```powershell
+cd apps\api
+npx neon@latest init -y --org-id <org-id> --project-id <project-id> --branch production --services postgres
+npx neon@latest deploy
+```
+
+`deploy` writes `DATABASE_URL` (pooled) and `DATABASE_URL_UNPOOLED` (direct) into `apps\api\.env`. You can instead copy both connection strings from the Neon console (Connect → "Connection pooling" on, then off). The API uses the pooled URL; migrations and `npm run seed` use the direct one. Neon URLs carry `sslmode=require`, so leave `DATABASE_SSL=false`.
+
+The database holds only text and numbers. Uploaded files (POs, delivery notes, cheque images) will go to file storage, not into Postgres.
+
+## Tests
+
+`npm run test:api` runs the API end-to-end tests against a separate database (`DATABASE_URL` for tests defaults to `postgres://sales:sales@localhost:5432/sales_test`; its schema is reset on every run).
+
+## Database changes
+
+Edit the entities, then `npm --prefix apps/api run migration:generate -- src/migrations/<Name>`, and add the new class to `apps/api/src/migrations/index.ts`. Migrations run automatically when the API starts.

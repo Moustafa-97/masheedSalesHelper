@@ -1,0 +1,44 @@
+@import "tailwindcss";
+@import "@fontsource/ibm-plex-sans-arabic/400.css";
+@import "@fontsource/ibm-plex-sans-arabic/500.css";
+@import "@fontsource/ibm-plex-sans-arabic/600.css";
+@import "@fontsource/ibm-plex-sans-arabic/700.css";
+
+/* UI palette: deep green chrome, Masheed orange as the accent. (Quotation PDFs keep their own orange template.) */
+@theme {
+  --font-sans: "IBM Plex Sans Arabic", system-ui, sans-serif;
+
+  --color-brand-950: #072822;
+  --color-brand-900: #0b3d33;
+  --color-brand-800: #0d4f43;
+  --color-brand-700: #0e6b5c;
+  --color-brand-100: #e3efeb;
+  --color-brand-50: #f0f6f4;
+
+  --color-accent-500: #f6a721;
+  --color-accent-600: #d98b0b;
+
+  --color-canvas: #f2f3f1;
+  --color-ink: #14201c;
+  --color-muted: #55615c;
+  --color-line: #dde2df;
+
+  --color-danger: #b42318;
+  --color-danger-bg: #fdecea;
+  --color-warn: #9a4a06;
+  --color-warn-bg: #fdf1e3;
+  --color-ok: #067647;
+  --color-ok-bg: #e7f6ec;
+  --color-info: #1d4f91;
+  --color-info-bg: #eaf1fb;
+}
+
+body {
+  background: var(--color-canvas);
+  color: var(--color-ink);
+}
+
+/* Western digits everywhere, also in Arabic text. */
+html {
+  font-variant-numeric: tabular-nums;
+}
