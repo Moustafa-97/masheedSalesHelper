@@ -11,6 +11,8 @@ export interface User {
   clientId: string | null;
   locale: Locale;
   isActive: boolean;
+  supplyContactName: string | null;
+  supplyContactPhone: string | null;
 }
 
 export type ClientStatus = "ACTIVE" | "PROSPECT" | "INACTIVE";
@@ -84,4 +86,170 @@ export interface ImportSummary {
   variantsUpdated: number;
   zones: number;
   notInFile: number;
+}
+
+/* ---------- Phase 2: projects, payments, orders ---------- */
+
+export interface ClientProject {
+  id: string;
+  clientId: string;
+  name: string;
+  mapsUrl: string | null;
+  contacts: string | null;
+  isActive: boolean;
+}
+
+export interface ClientAccount {
+  creditLimit: number;
+  openingBalance: number;
+  ordersTotal: number;
+  paid: number;
+  balance: number;
+  available: number;
+  paymentTermsDays: number;
+}
+
+export interface FileMeta {
+  id: string;
+  originalName: string;
+  mimeType: string;
+  size: number;
+}
+
+export interface Payment {
+  id: string;
+  clientId: string;
+  orderId: string | null;
+  amount: number;
+  date: string;
+  method: "TRANSFER" | "CASH";
+  reference: string | null;
+  notes: string | null;
+  file: FileMeta | null;
+  removedAt: string | null;
+  removedReason: string | null;
+}
+
+export type OrderStatus =
+  | "NEW"
+  | "SENT_TO_SUPPLY"
+  | "SUPPLY_RECEIVED"
+  | "AT_SUPPLIER"
+  | "IN_TRANSIT"
+  | "DELIVERED"
+  | "INVOICED"
+  | "CANCELLED";
+
+export type DocumentType = "PO" | "DELIVERY_NOTE" | "PURCHASE_INVOICE" | "SALES_INVOICE" | "OTHER";
+
+export interface Totals {
+  subtotal: number;
+  vat: number;
+  total: number;
+}
+
+export interface OrderSummary {
+  id: string;
+  number: string;
+  orderDate: string;
+  status: OrderStatus;
+  client: { id: string; name: string };
+  project: { id: string; name: string } | null;
+  lineCount: number;
+  totals: Totals;
+  dueDate: string;
+  deliveredPct: number;
+}
+
+export interface OrderLine {
+  id: string;
+  variantId: string;
+  description: string;
+  unit: Unit;
+  color: string | null;
+  qty: number;
+  unitPrice: number;
+  purchasePrice: number | null;
+  belowMinReason: string | null;
+  minQty: number | null;
+  delivered: number;
+  remaining: number;
+  removedAt: string | null;
+  removedReason: string | null;
+}
+
+export interface OrderDocument {
+  id: string;
+  type: DocumentType;
+  reference: string | null;
+  file: FileMeta;
+  createdAt: string;
+  removedAt: string | null;
+  removedReason: string | null;
+}
+
+export interface Delivery {
+  id: string;
+  date: string;
+  reference: string | null;
+  documentId: string | null;
+  notes: string | null;
+  lines: { id: string; orderLineId: string; qty: number }[];
+  removedAt: string | null;
+  removedReason: string | null;
+}
+
+export interface SalesInvoice {
+  id: string;
+  number: string;
+  date: string;
+  amount: number;
+  documentId: string | null;
+  removedAt: string | null;
+  removedReason: string | null;
+}
+
+export interface OrderEvent {
+  id: string;
+  type: string;
+  data: Record<string, unknown>;
+  user: { id: string; name: string };
+  createdAt: string;
+}
+
+export interface OrderDetail {
+  id: string;
+  number: string;
+  orderDate: string;
+  status: OrderStatus;
+  vatRate: number;
+  notes: string | null;
+  cancelledAt: string | null;
+  cancelReason: string | null;
+  clientId: string;
+  projectId: string | null;
+  client: {
+    id: string;
+    name: string;
+    paymentTermsDays: number;
+    purchasingName: string | null;
+    purchasingPhone: string | null;
+  };
+  project: ClientProject | null;
+  createdBy: { id: string; name: string };
+  lines: OrderLine[];
+  totals: Totals;
+  margin: { purchaseSubtotal: number; amount: number } | null;
+  dueDate: string;
+  checklist: {
+    fullyDelivered: boolean;
+    hasDeliveryNote: boolean;
+    hasPurchaseInvoice: boolean;
+    hasSalesInvoice: boolean;
+  };
+  documents: OrderDocument[];
+  deliveries: Delivery[];
+  invoices: SalesInvoice[];
+  events: OrderEvent[];
+  createdAt: string;
 }

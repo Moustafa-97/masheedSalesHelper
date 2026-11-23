@@ -11,7 +11,9 @@ Sales tracking for reps: clients and credit limits, products, orders, collection
 
 **Product catalogue:** Products → **Import products file** (admin) reads Masheed's ERP export (`Zone, Category, Brand, Product name, Size, Color, Unit`). Names are shortened and grouped across brands (e.g. every brand's *Rebar G60 · 12mm · 12m*), each item keeps its regions and truck loads (`580 Bags`, `600 Pallet`, …), and importing a newer export updates the file's data without touching minimum quantities, active flags or renamed products.
 
-Next: orders (credit check, WhatsApp message, PO, documents) → collections, cheques, guarantees and email alerts → quotations with PDF export → lost deals and market prices → client portal → admin dashboard and deployment.
+**Phase 2 (orders):** client projects (site name, Google Maps link, contacts); orders with Masheed's SO number, prices excl. VAT and optional purchase prices (margin); a credit check on every order and edit (available = limit − opening balance − orders + payments; cash clients need a payment first); the supply message for WhatsApp without prices; POs, delivery notes, purchase and sales invoices; partial deliveries with a received/ordered counter; automatic *delivered* / *invoiced* status once quantities and documents are complete; nothing is ever deleted (removed lines, deliveries and documents stay visible with a reason) and every change is in the order's history; Excel export of orders, lines, deliveries and a per-project summary. Uploaded files are kept in `apps/api/uploads` (set `UPLOAD_DIR` to change it).
+
+Next: collections, cheques, guarantees and email alerts → quotations with PDF export → lost deals and market prices → client portal → admin dashboard and deployment.
 
 ## Run it on Windows
 

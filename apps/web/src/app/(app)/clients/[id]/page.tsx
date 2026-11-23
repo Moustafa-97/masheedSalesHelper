@@ -2,6 +2,7 @@
 
 import { useParams } from "next/navigation";
 import { useState } from "react";
+import { ClientAccountPanel } from "@/components/client-account";
 import { ClientForm } from "@/components/client-form";
 import { PhoneIcon } from "@/components/icons";
 import { Badge, Button, Card, Muted, PageHeader } from "@/components/ui";
@@ -103,6 +104,7 @@ export default function ClientPage() {
           {client.notes && <p className="mt-3 whitespace-pre-line border-t border-line pt-3 text-sm">{client.notes}</p>}
         </Card>
       </div>
+      <ClientAccountPanel client={client} />
     </>
   );
 }

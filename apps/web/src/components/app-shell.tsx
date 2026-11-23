@@ -8,16 +8,24 @@ import { api } from "@/lib/api";
 import { useMe } from "@/lib/hooks";
 import { useI18n, type MessageKey } from "@/lib/i18n";
 import type { Role } from "@/lib/types";
-import { BoxIcon, HomeIcon, LogoutIcon, PersonIcon, ShieldIcon, UsersIcon } from "./icons";
+import { BoxIcon, HomeIcon, LogoutIcon, OrdersIcon, PersonIcon, ShieldIcon, UsersIcon } from "./icons";
 import { Muted } from "./ui";
 
-type NavItem = { href: string; label: MessageKey; icon: ComponentType<SVGProps<SVGSVGElement>>; roles: Role[] };
+type NavItem = {
+  href: string;
+  label: MessageKey;
+  icon: ComponentType<SVGProps<SVGSVGElement>>;
+  roles: Role[];
+  /** Hidden from the phone's bottom bar (still in the desktop sidebar) to keep it to five items. */
+  desktopOnly?: boolean;
+};
 
 const NAV: NavItem[] = [
   { href: "/", label: "home", icon: HomeIcon, roles: ["ADMIN", "REP"] },
+  { href: "/orders", label: "orders", icon: OrdersIcon, roles: ["ADMIN", "REP"] },
   { href: "/clients", label: "clients", icon: UsersIcon, roles: ["ADMIN", "REP"] },
   { href: "/products", label: "products", icon: BoxIcon, roles: ["ADMIN", "REP"] },
-  { href: "/users", label: "users", icon: ShieldIcon, roles: ["ADMIN"] },
+  { href: "/users", label: "users", icon: ShieldIcon, roles: ["ADMIN"], desktopOnly: true },
   { href: "/profile", label: "profile", icon: PersonIcon, roles: ["ADMIN", "REP", "CLIENT"] },
 ];
 
@@ -29,6 +37,7 @@ export function AppShell({ children }: { children: ReactNode }) {
   const pathname = usePathname();
   const { data: me, isLoading } = useMe();
   const items = NAV.filter((i) => me && i.roles.includes(me.role));
+  const mobileItems = items.filter((i) => !i.desktopOnly);
 
   const logout = async () => {
     await api("/auth/logout", { method: "POST" });
@@ -86,9 +95,9 @@ export function AppShell({ children }: { children: ReactNode }) {
         </main>
         <nav
           className="fixed inset-x-0 bottom-0 z-10 grid border-t border-line bg-white md:hidden"
-          style={{ gridTemplateColumns: `repeat(${Math.max(items.length, 1)}, minmax(0, 1fr))` }}
+          style={{ gridTemplateColumns: `repeat(${Math.max(mobileItems.length, 1)}, minmax(0, 1fr))` }}
         >
-          {items.map(({ href, label, icon: Icon }) => (
+          {mobileItems.map(({ href, label, icon: Icon }) => (
             <Link
               key={href}
               href={href}
