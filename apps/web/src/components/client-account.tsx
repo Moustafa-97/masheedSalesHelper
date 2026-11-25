@@ -8,7 +8,7 @@ import { api } from "@/lib/api";
 import { useAccount, useOrders, usePayments, useProjects } from "@/lib/hooks";
 import { useI18n } from "@/lib/i18n";
 import { fileUrl, formatMoney, today, uploadFile } from "@/lib/orders";
-import type { Client, ClientProject } from "@/lib/types";
+import type { Client, ClientProject, Payment, PaymentMethod } from "@/lib/types";
 import { ProjectForm, ReasonAction, Stat, StatusBadge } from "./order-bits";
 import { Badge, Button, Card, Input, Notice, Select } from "./ui";
 
@@ -19,7 +19,12 @@ function AccountCard({ clientId }: { clientId: string }) {
   const used = a.creditLimit > 0 ? Math.min(100, Math.max(0, Math.round((a.balance / a.creditLimit) * 100))) : 0;
   return (
     <Card className="flex flex-col gap-3">
-      <h2 className="font-bold">{t("account")}</h2>
+      <div className="flex items-center justify-between gap-2">
+        <h2 className="font-bold">{t("account")}</h2>
+        <Link href={`/clients/${clientId}/statement`}>
+          <Button variant="secondary" className="min-h-9">{t("statement")}</Button>
+        </Link>
+      </div>
       <dl className="grid grid-cols-2 gap-3 md:grid-cols-4">
         <Stat label={t("ordersTotal")}>{formatMoney(a.ordersTotal)}</Stat>
         <Stat label={t("paid")}>{formatMoney(a.paid)}</Stat>
@@ -28,6 +33,11 @@ function AccountCard({ clientId }: { clientId: string }) {
           <span className={a.available < 0 ? "text-danger" : undefined}>{formatMoney(a.available)}</span>
         </Stat>
       </dl>
+      {a.pending > 0 && (
+        <p className="text-sm text-muted">
+          {t("pendingCollection")}: <bdi className="font-semibold text-ink">{formatMoney(a.pending)}</bdi>
+        </p>
+      )}
       {a.creditLimit > 0 && (
         <div className="h-2.5 overflow-hidden rounded-full bg-canvas" aria-label={`${used}%`}>
           <div
@@ -81,30 +91,95 @@ function Projects({ clientId }: { clientId: string }) {
   );
 }
 
+const METHODS = ["TRANSFER", "CASH", "CHEQUE", "LC"] as const;
+
+function PaymentRow({ clientId, p, refresh }: { clientId: string; p: Payment; refresh: () => void }) {
+  const { t } = useI18n();
+  const [error, setError] = useState<string | null>(null);
+  const setStatus = (status: "RECEIVED" | "BOUNCED", reason?: string) =>
+    api(`/clients/${clientId}/payments/${p.id}/status`, { method: "PUT", body: { status, reason, collectedDate: today() } })
+      .then(refresh)
+      .catch((e: Error) => setError(e.message));
+  const off = Boolean(p.removedAt) || p.status === "BOUNCED";
+  return (
+    <li className={clsx("flex flex-col gap-2 rounded-xl border border-line p-3 text-sm", off && "opacity-60")}>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className={clsx(off && "line-through")}>
+          <bdi className="font-bold">{formatMoney(p.amount)}</bdi> · {t(`method.${p.method}`)} · <bdi>{p.date}</bdi>
+          {p.bank && <> · {p.bank}</>}
+          {p.reference && <> · <bdi>{p.reference}</bdi></>}
+          {p.file && <> · <a href={fileUrl(p.file.id)} target="_blank" rel="noreferrer" className="text-brand-700 underline">{t("receipt")}</a></>}
+        </div>
+        <Badge tone={p.status === "RECEIVED" ? "ok" : p.status === "PENDING" ? "warn" : "danger"}>
+          {t(`payStatus.${p.status}`)}
+        </Badge>
+      </div>
+      {(p.dueDate || p.collectedDate) && (
+        <div className="text-xs text-muted">
+          {p.dueDate && <>{t("chequeDueDate")}: <bdi>{p.dueDate}</bdi></>}
+          {p.dueDate && p.collectedDate && " · "}
+          {p.collectedDate && p.method !== "TRANSFER" && p.method !== "CASH" && t("collectedOn", { date: p.collectedDate })}
+        </div>
+      )}
+      {p.notes && <p className="whitespace-pre-line text-xs text-muted">{p.notes}</p>}
+      {p.removedAt ? (
+        <Badge tone="danger">{t("removed")}: {p.removedReason}</Badge>
+      ) : (
+        <div className="flex flex-wrap gap-2">
+          {p.status === "PENDING" && (
+            <>
+              <Button variant="secondary" className="min-h-9" onClick={() => setStatus("RECEIVED")}>✓ {t("markCollected")}</Button>
+              <ReasonAction label={t("markBounced")} onConfirm={(reason) => setStatus("BOUNCED", reason)} />
+            </>
+          )}
+          <ReasonAction
+            label={t("remove")}
+            onConfirm={(reason) => api(`/clients/${clientId}/payments/${p.id}`, { method: "DELETE", body: { reason } }).then(refresh)}
+          />
+        </div>
+      )}
+      {error && <Notice>{error}</Notice>}
+    </li>
+  );
+}
+
 function Payments({ clientId }: { clientId: string }) {
   const { t } = useI18n();
   const qc = useQueryClient();
   const { data: payments = [] } = usePayments(clientId);
   const [amount, setAmount] = useState("");
   const [date, setDate] = useState(today());
-  const [method, setMethod] = useState<"TRANSFER" | "CASH">("TRANSFER");
+  const [method, setMethod] = useState<PaymentMethod>("TRANSFER");
+  const [dueDate, setDueDate] = useState("");
+  const [bank, setBank] = useState("");
   const [reference, setReference] = useState("");
   const [file, setFile] = useState<File | null>(null);
+  const deferred = method === "CHEQUE" || method === "LC";
   const refresh = () => {
     qc.invalidateQueries({ queryKey: ["payments", clientId] });
     qc.invalidateQueries({ queryKey: ["account", clientId] });
+    qc.invalidateQueries({ queryKey: ["statement", clientId] });
   };
   const add = useMutation({
     mutationFn: async () => {
       const fileId = file ? (await uploadFile(file)).id : null;
       return api(`/clients/${clientId}/payments`, {
         method: "POST",
-        body: { amount: Number(amount), date, method, reference: reference || null, fileId },
+        body: {
+          amount: Number(amount),
+          date,
+          method,
+          reference: reference || null,
+          fileId,
+          dueDate: deferred ? dueDate : null,
+          bank: bank || null,
+        },
       });
     },
     onSuccess: () => {
       setAmount("");
       setReference("");
+      setDueDate("");
       setFile(null);
       refresh();
     },
@@ -118,40 +193,26 @@ function Payments({ clientId }: { clientId: string }) {
       <h2 className="font-bold">{t("payments")}</h2>
       {!payments.length && <p className="text-sm text-muted">—</p>}
       <ul className="flex flex-col gap-2">
-        {payments.map((p) => (
-          <li key={p.id} className={clsx("flex flex-wrap items-center justify-between gap-2 rounded-xl border border-line p-3 text-sm", p.removedAt && "opacity-60")}>
-            <div className={clsx(p.removedAt && "line-through")}>
-              <bdi className="font-bold">{formatMoney(p.amount)}</bdi> · <bdi>{p.date}</bdi> · {t(`method.${p.method}`)}
-              {p.reference && <> · <bdi>{p.reference}</bdi></>}
-              {p.file && <> · <a href={fileUrl(p.file.id)} target="_blank" rel="noreferrer" className="text-brand-700 underline">{t("receipt")}</a></>}
-            </div>
-            {p.removedAt ? (
-              <Badge tone="danger">{t("removed")}: {p.removedReason}</Badge>
-            ) : (
-              <ReasonAction
-                label={t("remove")}
-                onConfirm={(reason) => api(`/clients/${clientId}/payments/${p.id}`, { method: "DELETE", body: { reason } }).then(refresh)}
-              />
-            )}
-          </li>
-        ))}
+        {payments.map((p) => <PaymentRow key={p.id} clientId={clientId} p={p} refresh={refresh} />)}
       </ul>
       <details>
         <summary className="cursor-pointer text-sm font-semibold text-brand-700">+ {t("addPayment")}</summary>
-        <form onSubmit={submit} className="mt-3 grid grid-cols-2 gap-2 md:grid-cols-5">
-          <Input label={t("amount")} value={amount} onChange={(e) => setAmount(e.target.value)} type="number" step="any" min={0.01} required dir="ltr" />
-          <Input label={t("transferDate")} type="date" value={date} onChange={(e) => setDate(e.target.value)} required />
-          <Select label={t("type")} value={method} onChange={(e) => setMethod(e.target.value as "TRANSFER" | "CASH")}>
-            <option value="TRANSFER">{t("method.TRANSFER")}</option>
-            <option value="CASH">{t("method.CASH")}</option>
+        <form onSubmit={submit} className="mt-3 grid grid-cols-2 gap-2">
+          <Select label={t("type")} value={method} onChange={(e) => setMethod(e.target.value as PaymentMethod)}>
+            {METHODS.map((m) => <option key={m} value={m}>{t(`method.${m}`)}</option>)}
           </Select>
+          <Input label={t("amount")} value={amount} onChange={(e) => setAmount(e.target.value)} type="number" step="any" min={0.01} required dir="ltr" />
+          <Input label={deferred ? t("receivedDate") : t("transferDate")} type="date" value={date} onChange={(e) => setDate(e.target.value)} required />
+          {deferred && <Input label={t("chequeDueDate")} type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} required />}
+          <Input label={t("bank")} hint={t("optional")} value={bank} onChange={(e) => setBank(e.target.value)} />
           <Input label={t("reference")} hint={t("optional")} value={reference} onChange={(e) => setReference(e.target.value)} dir="ltr" />
-          <label className="flex flex-col gap-1 text-xs text-muted">
+          <label className="col-span-2 flex flex-col gap-1 text-xs text-muted">
             {t("receipt")}
             <input type="file" accept="application/pdf,image/*" onChange={(e) => setFile(e.target.files?.[0] ?? null)} className="text-sm text-ink" />
           </label>
-          {add.error && <div className="col-span-2 md:col-span-5"><Notice>{add.error.message}</Notice></div>}
-          <div className="col-span-2 md:col-span-5"><Button type="submit" disabled={add.isPending}>{t("save")}</Button></div>
+          {deferred && <p className="col-span-2 text-xs text-muted">{t("pendingNotCounted")}</p>}
+          {add.error && <div className="col-span-2"><Notice>{add.error.message}</Notice></div>}
+          <div className="col-span-2"><Button type="submit" disabled={add.isPending}>{t("save")}</Button></div>
         </form>
       </details>
     </Card>

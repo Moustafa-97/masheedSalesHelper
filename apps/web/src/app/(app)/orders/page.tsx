@@ -13,6 +13,7 @@ function OrdersList() {
   const { t } = useI18n();
   const params = useSearchParams();
   const [filters, setFilters] = useState<OrderFilters>({
+    state: params.get("state") ?? "open",
     clientId: params.get("clientId") ?? undefined,
     status: params.get("status") ?? undefined,
   });
@@ -37,6 +38,22 @@ function OrdersList() {
         }
       />
 
+      <div role="tablist" className="mb-3 flex gap-1 overflow-x-auto rounded-xl bg-white p-1 shadow-sm">
+        {(["open", "done", "cancelled", ""] as const).map((s) => (
+          <button
+            key={s || "all"}
+            role="tab"
+            aria-selected={(filters.state ?? "") === s}
+            onClick={() => setFilters((f) => ({ ...f, state: s || undefined, status: undefined }))}
+            className={`min-h-10 flex-1 whitespace-nowrap rounded-lg px-3 text-sm font-semibold ${
+              (filters.state ?? "") === s ? "bg-brand-700 text-white" : "text-muted hover:bg-brand-50"
+            }`}
+          >
+            {t(`state.${s || "all"}` as "state.open")}
+          </button>
+        ))}
+      </div>
+
       <Card className="mb-4 grid grid-cols-2 gap-2 lg:grid-cols-5">
         <Input
           label={t("search")}
@@ -51,7 +68,17 @@ function OrdersList() {
         </Select>
         <Select label={t("status")} value={filters.status ?? ""} onChange={(e) => set("status", e.target.value)}>
           <option value="">{t("allStatuses")}</option>
-          {[...ORDER_FLOW, "CANCELLED" as const].map((s) => (
+          {[...ORDER_FLOW, "CANCELLED" as const]
+            .filter((s) =>
+              filters.state === "open"
+                ? !["DELIVERED", "INVOICED", "CANCELLED"].includes(s)
+                : filters.state === "done"
+                  ? ["DELIVERED", "INVOICED"].includes(s)
+                  : filters.state === "cancelled"
+                    ? s === "CANCELLED"
+                    : true,
+            )
+            .map((s) => (
             <option key={s} value={s}>{t(`orderStatus.${s}`)}</option>
           ))}
         </Select>

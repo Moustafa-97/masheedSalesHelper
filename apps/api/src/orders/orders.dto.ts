@@ -4,6 +4,7 @@ import {
   ArrayMinSize,
   IsDateString,
   IsEnum,
+  IsIn,
   IsNumber,
   IsOptional,
   IsString,
@@ -14,7 +15,7 @@ import {
   MinLength,
   ValidateNested,
 } from 'class-validator';
-import { DocumentType, OrderStatus, PaymentMethod } from './order.entities.js';
+import { DocumentType, OrderStatus, PaymentMethod, PaymentStatus } from './order.entities.js';
 
 const price = { maxDecimalPlaces: 2 } as const;
 const qty = { maxDecimalPlaces: 3 } as const;
@@ -76,6 +77,23 @@ export class ReasonDto {
   @IsString() @MinLength(2) @MaxLength(500) reason: string;
 }
 
+export class PaymentStatusDto {
+  @IsEnum(PaymentStatus) status: PaymentStatus;
+  /** When it was collected (RECEIVED); defaults to today. */
+  @IsOptional() @IsDateString({ strict: true }) collectedDate?: string;
+  @IsOptional() @IsString() @MaxLength(500) reason?: string;
+}
+
+export class StatementQuery {
+  @IsOptional() @IsDateString({ strict: true }) from?: string;
+  @IsOptional() @IsDateString({ strict: true }) to?: string;
+}
+
+export class UnitPriceDto {
+  /** Sale price excl. VAT, applied to every line that isn't removed. */
+  @IsNumber(price) @Min(0) unitPrice: number;
+}
+
 export class PurchasePriceDto {
   /** Applied to every line that isn't removed. */
   @IsNumber(price) @Min(0) purchasePrice: number;
@@ -86,6 +104,8 @@ export class StatusDto {
 }
 
 export class ListOrdersQuery {
+  /** open: not yet delivered; done: delivered or invoiced; cancelled. */
+  @IsOptional() @IsIn(['open', 'done', 'cancelled']) state?: 'open' | 'done' | 'cancelled';
   @IsOptional() @IsUUID() clientId?: string;
   @IsOptional() @IsUUID() projectId?: string;
   @IsOptional() @IsEnum(OrderStatus) status?: OrderStatus;
@@ -129,6 +149,9 @@ export class AddPaymentDto {
   @IsNumber(price) @Min(0.01) amount: number;
   @IsDateString({ strict: true }) date: string;
   @IsOptional() @IsEnum(PaymentMethod) method?: PaymentMethod;
+  /** Cheque date or LC maturity date (required for both). */
+  @IsOptional() @IsDateString({ strict: true }) dueDate?: string | null;
+  @IsOptional() @IsString() @MaxLength(80) bank?: string | null;
   @IsOptional() @IsString() @MaxLength(80) reference?: string | null;
   @IsOptional() @IsUUID() fileId?: string | null;
   @IsOptional() @IsUUID() orderId?: string | null;

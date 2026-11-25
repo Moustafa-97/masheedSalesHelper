@@ -46,7 +46,7 @@ export function AppShell({ children }: { children: ReactNode }) {
 
   return (
     <div className="flex min-h-dvh">
-      <aside className="sticky top-0 hidden h-dvh w-60 shrink-0 flex-col bg-brand-900 p-4 text-white md:flex">
+      <aside className="sticky top-0 hidden h-dvh w-60 shrink-0 flex-col bg-brand-900 p-4 text-white md:flex print:hidden">
         <div className="mb-6 px-2">
           <div className="text-lg font-bold">{t("appName")}</div>
           {me && <div className="text-xs text-white/70">{me.name}</div>}
@@ -84,7 +84,7 @@ export function AppShell({ children }: { children: ReactNode }) {
       </aside>
 
       <div className="flex min-w-0 flex-1 flex-col">
-        <header className="flex items-center justify-between bg-brand-900 px-4 py-3 text-white md:hidden">
+        <header className="flex items-center justify-between bg-brand-900 px-4 py-3 text-white md:hidden print:hidden">
           <span className="font-bold">{t("appName")}</span>
           <button onClick={() => setLocale(locale === "ar" ? "en" : "ar")} className="min-h-11 px-2 text-sm">
             {locale === "ar" ? "EN" : "ع"}
@@ -94,7 +94,7 @@ export function AppShell({ children }: { children: ReactNode }) {
           {isLoading ? <Muted>{t("loading")}</Muted> : children}
         </main>
         <nav
-          className="fixed inset-x-0 bottom-0 z-10 grid border-t border-line bg-white md:hidden"
+          className="fixed inset-x-0 bottom-0 z-10 grid border-t border-line bg-white md:hidden print:hidden"
           style={{ gridTemplateColumns: `repeat(${Math.max(mobileItems.length, 1)}, minmax(0, 1fr))` }}
         >
           {mobileItems.map(({ href, label, icon: Icon }) => (

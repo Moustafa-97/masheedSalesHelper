@@ -38,6 +38,16 @@ import {
 } from './orders.dto.js';
 
 const round3 = (n: number) => Math.round(n * 1000) / 1000;
+
+const DONE = [OrderStatus.DELIVERED, OrderStatus.INVOICED];
+const OPEN = ORDER_FLOW.filter((s) => !DONE.includes(s));
+
+/** open: still being supplied; done: delivered or invoiced; cancelled. */
+export function applyState(qb: SelectQueryBuilder<Order>, state?: 'open' | 'done' | 'cancelled') {
+  if (state === 'open') qb.andWhere('o.status IN (:...open)', { open: OPEN });
+  if (state === 'done') qb.andWhere('o.status IN (:...done)', { done: DONE });
+  if (state === 'cancelled') qb.andWhere('o.status = :cancelled', { cancelled: OrderStatus.CANCELLED });
+}
 type PricedLine = { id?: string; qty: number; unitPrice: number; removedAt: Date | null };
 const BEFORE_DELIVERED = ORDER_FLOW.slice(0, ORDER_FLOW.indexOf(OrderStatus.DELIVERED));
 
@@ -63,6 +73,7 @@ export class OrdersService {
     if (query.clientId) qb.andWhere('o.clientId = :clientId', { clientId: query.clientId });
     if (query.projectId) qb.andWhere('o.projectId = :projectId', { projectId: query.projectId });
     if (query.status) qb.andWhere('o.status = :status', { status: query.status });
+    applyState(qb, query.state);
     if (query.from) qb.andWhere('o.orderDate >= :from', { from: query.from });
     if (query.to) qb.andWhere('o.orderDate <= :to', { to: query.to });
     if (query.q) {
@@ -80,6 +91,7 @@ export class OrdersService {
       this.dataSource.manager,
       orders.flatMap((o) => o.lines.map((l) => l.id)),
     );
+    const activity = await this.lastActivity(orders.map((o) => o.id));
     return orders.map((o) => {
       const active = o.lines.filter((l) => !l.removedAt);
       const ordered = active.reduce((s, l) => s + l.qty, 0);
@@ -95,8 +107,53 @@ export class OrdersService {
         totals: orderTotals(o.lines, o.vatRate),
         dueDate: addDays(o.orderDate, o.client.paymentTermsDays),
         deliveredPct: ordered ? Math.round((got / ordered) * 100) : 0,
+        lastActivityAt: activity.get(o.id) ?? o.updatedAt,
       };
     });
+  }
+
+  /**
+   * Dashboard counts: open orders (not delivered yet), the open ones nobody has touched for
+   * `staleDays` days, and completed ones (delivered or invoiced).
+   */
+  async summary(user: User, staleDays = 3) {
+    const open = await this.list(user, { state: 'open' });
+    const [done, cancelled] = await Promise.all([
+      this.countState(user, 'done'),
+      this.countState(user, 'cancelled'),
+    ]);
+    const cutoff = Date.now() - staleDays * 24 * 3600 * 1000;
+    const stale = open
+      .filter((o) => new Date(o.lastActivityAt).getTime() < cutoff)
+      .sort((a, b) => new Date(a.lastActivityAt).getTime() - new Date(b.lastActivityAt).getTime());
+    return {
+      open: open.length,
+      done,
+      cancelled,
+      staleDays,
+      stale: stale.slice(0, 10),
+      staleCount: stale.length,
+      byStatus: open.reduce<Record<string, number>>((acc, o) => ((acc[o.status] = (acc[o.status] ?? 0) + 1), acc), {}),
+    };
+  }
+
+  private async countState(user: User, state: 'done' | 'cancelled') {
+    const qb = this.dataSource.getRepository(Order).createQueryBuilder('o').innerJoin('o.client', 'client');
+    this.scopeQuery(qb, user);
+    applyState(qb, state);
+    return qb.getCount();
+  }
+
+  private async lastActivity(orderIds: string[]) {
+    if (!orderIds.length) return new Map<string, Date>();
+    const rows: { orderId: string; at: Date }[] = await this.dataSource
+      .createQueryBuilder(OrderEvent, 'e')
+      .select('e.orderId', 'orderId')
+      .addSelect('MAX(e.createdAt)', 'at')
+      .where('e.orderId IN (:...orderIds)', { orderIds })
+      .groupBy('e.orderId')
+      .getRawMany();
+    return new Map(rows.map((r) => [r.orderId, new Date(r.at)]));
   }
 
   async get(user: User, id: string, m: EntityManager = this.dataSource.manager) {
@@ -270,6 +327,18 @@ export class OrdersService {
         reason,
       });
       await this.syncStatus(m, order, user);
+    });
+    return this.get(user, id);
+  }
+
+  /** One sale price for every active line (e.g. all rebar diameters at the same price per ton). */
+  async setUnitPrice(user: User, id: string, unitPrice: number) {
+    await this.write(async (m) => {
+      const order = await this.editable(user, id, m, true);
+      const extra = await this.totalDelta(m, order, (lines) => lines.map((l) => ({ ...l, unitPrice })));
+      await this.creditCheck(m, order.client, extra);
+      const result = await m.update(OrderLine, { orderId: id, removedAt: IsNull() }, { unitPrice });
+      await this.event(m, id, user, 'UNIT_PRICE_SET', { unitPrice, lines: result.affected });
     });
     return this.get(user, id);
   }

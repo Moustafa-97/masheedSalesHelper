@@ -44,6 +44,7 @@ function NewOrderForm() {
   const [lines, setLines] = useState<DraftLine[]>([]);
   const [pick, setPick] = useState("");
   const [allCost, setAllCost] = useState("");
+  const [allPrice, setAllPrice] = useState("");
   const { data: projects = [] } = useProjects(clientId || undefined);
   const { data: account } = useAccount(clientId || undefined);
 
@@ -55,7 +56,7 @@ function NewOrderForm() {
     if (!variant) return;
     setLines((ls) => [
       ...ls,
-      { key: Date.now(), variant, qty: variant.minQty ? String(variant.minQty) : "", unitPrice: "", purchasePrice: allCost, color: "", belowMinReason: "" },
+      { key: Date.now(), variant, qty: variant.minQty ? String(variant.minQty) : "", unitPrice: allPrice, purchasePrice: allCost, color: "", belowMinReason: "" },
     ]);
     setPick("");
   };
@@ -137,6 +138,12 @@ function NewOrderForm() {
 
       {lines.length > 0 && (
         <Card className="flex flex-col gap-3 p-0">
+          <div className="flex flex-wrap items-end gap-2 border-b border-line p-4">
+            <Input label={t("oneSalePrice")} hint={t("exclVat")} value={allPrice} onChange={(e) => setAllPrice(e.target.value)} type="number" min={0} step="any" dir="ltr" className="w-48" />
+            <Button type="button" variant="secondary" onClick={() => setLines((ls) => ls.map((l) => ({ ...l, unitPrice: allPrice })))} disabled={allPrice === ""}>
+              {t("applyAll")}
+            </Button>
+          </div>
           <div className="flex flex-wrap items-end gap-2 border-b border-line p-4">
             <Input label={t("onePurchasePrice")} value={allCost} onChange={(e) => setAllCost(e.target.value)} type="number" min={0} step="any" dir="ltr" className="w-48" />
             <Button type="button" variant="secondary" onClick={() => setLines((ls) => ls.map((l) => ({ ...l, purchasePrice: allCost })))} disabled={allCost === ""}>

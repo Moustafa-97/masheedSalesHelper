@@ -104,6 +104,7 @@ export interface ClientAccount {
   openingBalance: number;
   ordersTotal: number;
   paid: number;
+  pending: number;
   balance: number;
   available: number;
   paymentTermsDays: number;
@@ -116,13 +117,19 @@ export interface FileMeta {
   size: number;
 }
 
+export type PaymentMethod = "TRANSFER" | "CASH" | "CHEQUE" | "LC";
+
 export interface Payment {
   id: string;
   clientId: string;
   orderId: string | null;
   amount: number;
   date: string;
-  method: "TRANSFER" | "CASH";
+  method: PaymentMethod;
+  status: "PENDING" | "RECEIVED" | "BOUNCED";
+  dueDate: string | null;
+  bank: string | null;
+  collectedDate: string | null;
   reference: string | null;
   notes: string | null;
   file: FileMeta | null;
@@ -159,6 +166,40 @@ export interface OrderSummary {
   totals: Totals;
   dueDate: string;
   deliveredPct: number;
+  lastActivityAt: string;
+}
+
+export interface OrdersSummary {
+  open: number;
+  done: number;
+  cancelled: number;
+  staleDays: number;
+  staleCount: number;
+  stale: OrderSummary[];
+  byStatus: Partial<Record<OrderStatus, number>>;
+}
+
+export interface StatementEntry {
+  date: string;
+  type: "ORDER" | "PAYMENT";
+  id: string;
+  reference: string;
+  description: string;
+  debit: number;
+  credit: number;
+  balance: number;
+}
+
+export interface Statement {
+  client: { id: string; name: string; code: string | null };
+  from: string | null;
+  to: string | null;
+  opening: number;
+  entries: StatementEntry[];
+  totalDebit: number;
+  totalCredit: number;
+  closing: number;
+  pending: { id: string; method: PaymentMethod; amount: number; date: string; dueDate: string | null; reference: string | null; bank: string | null }[];
 }
 
 export interface OrderLine {

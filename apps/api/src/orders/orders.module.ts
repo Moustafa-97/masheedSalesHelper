@@ -42,6 +42,7 @@ import {
   PurchasePriceDto,
   ReasonDto,
   StatusDto,
+  UnitPriceDto,
   UpdateLineDto,
   UpdateOrderDto,
 } from './orders.dto.js';
@@ -71,6 +72,12 @@ export class OrdersController {
     return new StreamableFile(await this.exporter.workbook(user, query), {
       disposition: `attachment; filename="${name}"`,
     });
+  }
+
+  /** Counts for the dashboard: open, stale (not updated for 3 days), done, cancelled. */
+  @Get('summary')
+  summary(@CurrentUser() user: User) {
+    return this.orders.summary(user);
   }
 
   @Get(':id')
@@ -121,6 +128,11 @@ export class OrdersController {
     @Body() dto: ReasonDto,
   ) {
     return this.orders.removeLine(user, id, lineId, dto.reason);
+  }
+
+  @Put(':id/unit-price')
+  unitPrice(@CurrentUser() user: User, @Id() id: string, @Body() dto: UnitPriceDto) {
+    return this.orders.setUnitPrice(user, id, dto.unitPrice);
   }
 
   @Put(':id/purchase-price')

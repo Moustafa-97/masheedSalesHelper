@@ -6,6 +6,7 @@ import { Role, User } from '../users/user.entity.js';
 import { addDays, orderTotals } from './account.service.js';
 import { Delivery, Order, OrderStatus } from './order.entities.js';
 import { ListOrdersQuery } from './orders.dto.js';
+import { applyState } from './orders.service.js';
 
 const STATUS_AR: Record<OrderStatus, string> = {
   NEW: 'جديدة',
@@ -55,6 +56,7 @@ export class OrdersExportService {
     if (query.clientId) qb.andWhere('o.clientId = :clientId', { clientId: query.clientId });
     if (query.projectId) qb.andWhere('o.projectId = :projectId', { projectId: query.projectId });
     if (query.status) qb.andWhere('o.status = :status', { status: query.status });
+    applyState(qb, query.state);
     if (query.from) qb.andWhere('o.orderDate >= :from', { from: query.from });
     if (query.to) qb.andWhere('o.orderDate <= :to', { to: query.to });
     if (query.q) {

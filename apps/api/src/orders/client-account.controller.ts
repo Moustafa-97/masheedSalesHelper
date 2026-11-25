@@ -10,15 +10,29 @@ import {
   ParseUUIDPipe,
   Patch,
   Post,
+  Put,
+  Query,
+  StreamableFile,
 } from '@nestjs/common';
+import ExcelJS from 'exceljs';
 import { InjectDataSource } from '@nestjs/typeorm';
 import { DataSource, IsNull } from 'typeorm';
 import { CurrentUser, Roles } from '../common/auth.decorators.js';
 import { Role, User } from '../users/user.entity.js';
 import { isUniqueViolation } from '../users/users.module.js';
-import { AccountService } from './account.service.js';
-import { ClientProject, Order, Payment, PaymentMethod, StoredFile } from './order.entities.js';
-import { AddPaymentDto, ProjectDto, ReasonDto, UpdateProjectDto } from './orders.dto.js';
+import { AccountService, buildStatement } from './account.service.js';
+import { ClientProject, Order, Payment, PaymentMethod, PaymentStatus, StoredFile } from './order.entities.js';
+import {
+  AddPaymentDto,
+  PaymentStatusDto,
+  ProjectDto,
+  ReasonDto,
+  StatementQuery,
+  UpdateProjectDto,
+} from './orders.dto.js';
+
+const METHOD_AR: Record<string, string> = { TRANSFER: 'تحويل', CASH: 'نقدي', CHEQUE: 'شيك', LC: 'اعتماد مستندي LC' };
+const today = () => new Date().toISOString().slice(0, 10);
 
 /** A client's projects (sites), payments and credit account. */
 @Controller('clients/:clientId')
@@ -124,16 +138,120 @@ export class ClientAccountController {
         throw new BadRequestException('File not found');
       }
     }
+    const method = dto.method ?? PaymentMethod.TRANSFER;
+    const deferred = method === PaymentMethod.CHEQUE || method === PaymentMethod.LC;
+    if (deferred && !dto.dueDate) throw new BadRequestException('A cheque or LC needs its due date');
     return this.dataSource.getRepository(Payment).save({
       clientId,
       orderId: dto.orderId ?? null,
       amount: dto.amount,
       date: dto.date,
-      method: dto.method ?? PaymentMethod.TRANSFER,
+      method,
+      // A cheque or LC counts only once the money is in the account.
+      status: deferred ? PaymentStatus.PENDING : PaymentStatus.RECEIVED,
+      collectedDate: deferred ? null : dto.date,
+      dueDate: dto.dueDate ?? null,
+      bank: dto.bank?.trim() || null,
       reference: dto.reference?.trim() || null,
       fileId: dto.fileId ?? null,
       notes: dto.notes?.trim() || null,
       createdById: user.id,
+    });
+  }
+
+  /** A cheque or LC is collected (RECEIVED) or bounces; a bounced cheque can be presented again (PENDING). */
+  @Put('payments/:paymentId/status')
+  async paymentStatus(
+    @CurrentUser() user: User,
+    @Param('clientId', ParseUUIDPipe) clientId: string,
+    @Param('paymentId', ParseUUIDPipe) paymentId: string,
+    @Body() dto: PaymentStatusDto,
+  ) {
+    await this.accounts.clientFor(user, clientId);
+    const repo = this.dataSource.getRepository(Payment);
+    const payment = await repo.findOneBy({ id: paymentId, clientId });
+    if (!payment || payment.removedAt) throw new NotFoundException('Payment not found');
+    if (payment.method !== PaymentMethod.CHEQUE && payment.method !== PaymentMethod.LC) {
+      throw new BadRequestException('Only cheques and LCs change status');
+    }
+    const notes = dto.status === PaymentStatus.BOUNCED && dto.reason
+      ? [payment.notes, `مرتجع: ${dto.reason}`].filter(Boolean).join('\n')
+      : payment.notes;
+    await repo.update(
+      { id: paymentId },
+      {
+        status: dto.status,
+        collectedDate: dto.status === PaymentStatus.RECEIVED ? (dto.collectedDate ?? today()) : null,
+        notes,
+      },
+    );
+    return repo.findOneByOrFail({ id: paymentId });
+  }
+
+  /* ---------- Statement of account ---------- */
+
+  @Get('statement')
+  async statement(
+    @CurrentUser() user: User,
+    @Param('clientId', ParseUUIDPipe) clientId: string,
+    @Query() q: StatementQuery,
+  ) {
+    const client = await this.accounts.clientFor(user, clientId);
+    return buildStatement(this.dataSource.manager, client, q.from ?? null, q.to ?? null);
+  }
+
+  @Get('statement/export')
+  async statementExport(
+    @CurrentUser() user: User,
+    @Param('clientId', ParseUUIDPipe) clientId: string,
+    @Query() q: StatementQuery,
+  ) {
+    const client = await this.accounts.clientFor(user, clientId);
+    const st = await buildStatement(this.dataSource.manager, client, q.from ?? null, q.to ?? null);
+    const wb = new ExcelJS.Workbook();
+    const ws = wb.addWorksheet('كشف حساب', { views: [{ rightToLeft: true }] });
+    ws.columns = [
+      { key: 'date', width: 12 },
+      { key: 'kind', width: 14 },
+      { key: 'ref', width: 18 },
+      { key: 'desc', width: 30 },
+      { key: 'debit', width: 16 },
+      { key: 'credit', width: 16 },
+      { key: 'balance', width: 16 },
+    ];
+    const money = '#,##0.00';
+    ws.addRow([`كشف حساب: ${st.client.name}${st.client.code ? ` (${st.client.code})` : ''}`]).font = { bold: true, size: 14 };
+    ws.addRow([`الفترة: ${st.from ?? 'من البداية'} — ${st.to ?? today()}`]);
+    ws.addRow([]);
+    const head = ws.addRow(['التاريخ', 'النوع', 'المرجع', 'البيان', 'مدين', 'دائن', 'الرصيد']);
+    head.font = { bold: true, color: { argb: 'FFFFFFFF' } };
+    head.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF0B3D33' } };
+    ws.addRow([st.from ?? '', 'رصيد افتتاحي', '', '', null, null, st.opening]).font = { italic: true };
+    for (const e of st.entries) {
+      ws.addRow([
+        e.date,
+        e.type === 'ORDER' ? 'طلبية' : 'دفعة',
+        e.reference,
+        e.type === 'PAYMENT' ? e.description.split(' · ').map((x) => METHOD_AR[x] ?? x).join(' · ') : e.description,
+        e.debit || null,
+        e.credit || null,
+        e.balance,
+      ]);
+    }
+    const total = ws.addRow(['', 'الإجمالي', '', '', st.totalDebit, st.totalCredit, st.closing]);
+    total.font = { bold: true };
+    if (st.pending.length) {
+      ws.addRow([]);
+      ws.addRow(['شيكات واعتمادات تحت التحصيل (مش محسوبة في الرصيد)']).font = { bold: true };
+      for (const p of st.pending) {
+        ws.addRow([p.date, METHOD_AR[p.method] ?? p.method, p.reference ?? '', `${p.bank ?? ''} · استحقاق ${p.dueDate ?? ''}`, null, p.amount, null]);
+      }
+    }
+    for (const col of [5, 6, 7]) ws.getColumn(col).numFmt = money;
+    const name = `statement-${(client.code ?? client.name).replace(/[^\w\u0600-\u06ff-]+/g, '_')}-${today()}.xlsx`;
+    return new StreamableFile(Buffer.from(await wb.xlsx.writeBuffer()), {
+      type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      disposition: `attachment; filename="statement.xlsx"; filename*=UTF-8''${encodeURIComponent(name)}`,
     });
   }
 

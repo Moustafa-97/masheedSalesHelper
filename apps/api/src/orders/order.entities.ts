@@ -362,6 +362,18 @@ export class SalesInvoice {
 export enum PaymentMethod {
   TRANSFER = 'TRANSFER',
   CASH = 'CASH',
+  CHEQUE = 'CHEQUE',
+  LC = 'LC',
+}
+
+/**
+ * A transfer or cash is RECEIVED at once. A cheque or LC is PENDING until the money reaches the
+ * account (then RECEIVED, on `collectedDate`) or the cheque bounces. Only RECEIVED counts as paid.
+ */
+export enum PaymentStatus {
+  PENDING = 'PENDING',
+  RECEIVED = 'RECEIVED',
+  BOUNCED = 'BOUNCED',
 }
 
 /**
@@ -387,12 +399,26 @@ export class Payment {
   @Column(money)
   amount: number;
 
-  /** Date the money reached the account. */
+  /** Transfer date, or the day the cheque / LC was received from the client. */
   @Column({ type: 'date' })
   date: string;
 
   @Column({ type: 'enum', enum: PaymentMethod, default: PaymentMethod.TRANSFER })
   method: PaymentMethod;
+
+  @Column({ type: 'enum', enum: PaymentStatus, default: PaymentStatus.RECEIVED })
+  status: PaymentStatus;
+
+  /** Cheque date or LC maturity date. */
+  @Column({ type: 'date', nullable: true })
+  dueDate: string | null;
+
+  @Column({ type: 'varchar', length: 80, nullable: true })
+  bank: string | null;
+
+  /** When the money reached the account: the statement and the balance count it from this date. */
+  @Column({ type: 'date', nullable: true })
+  collectedDate: string | null;
 
   @Column({ type: 'varchar', length: 80, nullable: true })
   reference: string | null;

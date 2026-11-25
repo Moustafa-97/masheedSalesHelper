@@ -277,4 +277,78 @@ describe('Orders (e2e)', () => {
     const removedRow = lines.getRows(2, lines.rowCount - 1)!.find((r) => String(r.getCell(15).value).startsWith('محذوف'));
     expect(removedRow?.font?.strike).toBe(true);
   });
+
+  it('counts a cheque or LC only once collected, and a bounced cheque never', async () => {
+    const base = `/clients/${cashClientId}`;
+    await as(rep).post(`${base}/payments`, { amount: 1000, date: '2026-11-25', method: 'CHEQUE' }).expect(400); // no due date
+    const cheque = (
+      await as(rep)
+        .post(`${base}/payments`, { amount: 50000, date: '2026-11-25', method: 'CHEQUE', dueDate: '2026-12-10', bank: 'Al Rajhi', reference: 'CHQ-881' })
+        .expect(201)
+    ).body;
+    const lc = (await as(rep).post(`${base}/payments`, { amount: 20000, date: '2026-11-25', method: 'LC', dueDate: '2027-01-15' }).expect(201)).body;
+    expect(cheque).toMatchObject({ status: 'PENDING', collectedDate: null });
+
+    let account = (await as(rep).get(`${base}/account`)).body;
+    expect(account).toMatchObject({ paid: 80500, pending: 70000, available: 0 });
+
+    await as(rep).put(`${base}/payments/${cheque.id}/status`, { status: 'RECEIVED', collectedDate: '2026-12-10' }).expect(200);
+    await as(rep).put(`${base}/payments/${lc.id}/status`, { status: 'BOUNCED', reason: 'Documents rejected' }).expect(200);
+    account = (await as(rep).get(`${base}/account`)).body;
+    expect(account).toMatchObject({ paid: 130500, pending: 0, available: 50000 });
+  });
+
+  it('builds a statement of account with a running balance', async () => {
+    const all = (await as(rep).get(`/clients/${cashClientId}/statement`).expect(200)).body;
+    expect(all.opening).toBe(0);
+    expect(all.entries.map((e: { type: string; debit: number; credit: number; balance: number }) => [e.type, e.debit, e.credit, e.balance])).toEqual([
+      ['PAYMENT', 0, 80500, -80500],
+      ['ORDER', 80500, 0, 0],
+      ['PAYMENT', 0, 50000, -50000],
+    ]);
+    expect(all.closing).toBe(-50000);
+
+    const window = (await as(rep).get(`/clients/${cashClientId}/statement?from=2026-11-23&to=2026-11-30`)).body;
+    expect(window.opening).toBe(-80500);
+    expect(window.entries).toHaveLength(1);
+    expect(window.closing).toBe(0);
+
+    const xlsx = await as(rep)
+      .get(`/clients/${cashClientId}/statement/export`)
+      .buffer(true)
+      .parse((r, cb) => {
+        const chunks: Buffer[] = [];
+        r.on('data', (c: Buffer) => chunks.push(c));
+        r.on('end', () => cb(null, Buffer.concat(chunks)));
+      })
+      .expect(200);
+    const wb = new ExcelJS.Workbook();
+    await wb.xlsx.load(xlsx.body);
+    expect(wb.worksheets[0].getCell('A1').value).toBe('كشف حساب: Cash Co');
+    await as(otherRep).get(`/clients/${cashClientId}/statement`).expect(404);
+  });
+
+  it('sets one sale price on every line, within the credit limit', async () => {
+    const order = (
+      await as(rep)
+        .post('/orders', newOrder({ number: 'SO/26/000300', lines: [{ variantId: rebar12, qty: 25, unitPrice: 100 }, { variantId: rebar16, qty: 25, unitPrice: 100 }] }))
+        .expect(201)
+    ).body;
+    const res = await as(rep).put(`/orders/${order.id}/unit-price`, { unitPrice: 150 }).expect(200);
+    expect(res.body.lines.map((l: { unitPrice: number }) => l.unitPrice)).toEqual([150, 150]);
+    expect(res.body.events[0]).toMatchObject({ type: 'UNIT_PRICE_SET' });
+    await as(rep).put(`/orders/${order.id}/unit-price`, { unitPrice: 9999 }).expect(422);
+  });
+
+  it('splits open and completed orders and counts them for the dashboard', async () => {
+    const open = (await as(rep).get('/orders?state=open')).body.map((o: { number: string }) => o.number);
+    const cancelled = (await as(rep).get('/orders?state=cancelled')).body.map((o: { number: string }) => o.number);
+    expect(open).toEqual(expect.arrayContaining(['SO/26/000101', 'SO/26/000300']));
+    expect(cancelled).toEqual(['SO/26/000103']);
+    expect((await as(rep).get('/orders?state=done')).body).toEqual([]);
+
+    const summary = (await as(rep).get('/orders/summary').expect(200)).body;
+    expect(summary).toMatchObject({ open: open.length, done: 0, cancelled: 1, staleDays: 3, staleCount: 0 });
+    expect(summary.byStatus.NEW).toBeGreaterThan(0);
+  });
 });

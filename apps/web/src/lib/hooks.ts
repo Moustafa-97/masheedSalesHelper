@@ -9,6 +9,8 @@ import type {
   ClientProject,
   OrderDetail,
   OrderSummary,
+  OrdersSummary,
+  Statement,
   Payment,
   Product,
   User,
@@ -63,7 +65,7 @@ export const useAccount = (clientId: string | undefined) =>
 export const usePayments = (clientId: string) =>
   useQuery({ queryKey: ["payments", clientId], queryFn: () => api<Payment[]>(`/clients/${clientId}/payments`) });
 
-export type OrderFilters = { clientId?: string; projectId?: string; status?: string; q?: string; from?: string; to?: string };
+export type OrderFilters = { state?: string; clientId?: string; projectId?: string; status?: string; q?: string; from?: string; to?: string };
 
 export const ordersQuery = (filters: OrderFilters) => query(filters);
 
@@ -72,3 +74,12 @@ export const useOrders = (filters: OrderFilters = {}) =>
 
 export const useOrder = (id: string) =>
   useQuery({ queryKey: ["orders", id], queryFn: () => api<OrderDetail>(`/orders/${id}`) });
+
+export const useOrdersSummary = () =>
+  useQuery({ queryKey: ["orders", "summary"], queryFn: () => api<OrdersSummary>("/orders/summary") });
+
+export const useStatement = (clientId: string, from?: string, to?: string) =>
+  useQuery({
+    queryKey: ["statement", clientId, from, to],
+    queryFn: () => api<Statement>(`/clients/${clientId}/statement${query({ from, to })}`),
+  });

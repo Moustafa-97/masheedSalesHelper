@@ -285,7 +285,7 @@ function AddLine({ act }: { act: ReturnType<typeof useOrderAction> }) {
   );
 }
 
-function OnePurchasePrice({ act }: { act: ReturnType<typeof useOrderAction> }) {
+function OnePrice({ act, kind }: { act: ReturnType<typeof useOrderAction>; kind: "unit" | "purchase" }) {
   const { t } = useI18n();
   const [value, setValue] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -295,12 +295,16 @@ function OnePurchasePrice({ act }: { act: ReturnType<typeof useOrderAction> }) {
       onSubmit={(e) => {
         e.preventDefault();
         setError(null);
-        act("/purchase-price", "PUT", { purchasePrice: num(value) })
+        act(
+          kind === "unit" ? "/unit-price" : "/purchase-price",
+          "PUT",
+          kind === "unit" ? { unitPrice: num(value) } : { purchasePrice: num(value) },
+        )
           .then(() => setValue(""))
           .catch((err: Error) => setError(err.message));
       }}
     >
-      <Input label={t("onePurchasePrice")} value={value} onChange={(e) => setValue(e.target.value)} type="number" step="any" min={0} required dir="ltr" className="w-48" />
+      <Input label={kind === "unit" ? t("oneSalePrice") : t("onePurchasePrice")} value={value} onChange={(e) => setValue(e.target.value)} type="number" step="any" min={0} required dir="ltr" className="w-48" />
       <Button type="submit" variant="secondary">{t("applyAll")}</Button>
       {error && <Notice>{error}</Notice>}
     </form>
@@ -551,6 +555,8 @@ function describe(type: string, data: Record<string, unknown>, t: (k: MessageKey
       return `${data.number} · ${formatMoney(data.amount as number)}`;
     case "PURCHASE_PRICE_SET":
       return formatMoney(data.purchasePrice as number);
+    case "UNIT_PRICE_SET":
+      return formatMoney(data.unitPrice as number);
     default:
       return (data.reason as string) ?? "";
   }
@@ -644,7 +650,12 @@ export default function OrderPage() {
               <span className="text-muted">{t("marginHint")}</span>
             )}
           </p>
-          {editable && <OnePurchasePrice act={act} />}
+          {editable && (
+            <div className="flex flex-col gap-3">
+              <OnePrice act={act} kind="unit" />
+              <OnePrice act={act} kind="purchase" />
+            </div>
+          )}
         </div>
       </Card>
 
