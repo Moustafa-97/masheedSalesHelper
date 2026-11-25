@@ -374,15 +374,11 @@ export enum PaymentStatus {
   PENDING = 'PENDING',
   RECEIVED = 'RECEIVED',
   BOUNCED = 'BOUNCED',
-  /** A guarantee cheque or LC given back to the client (they paid another way). */
+  /** No longer used (guarantees moved to client_guarantees); kept because Postgres can't drop an enum value. */
   RETURNED = 'RETURNED',
 }
 
-/** A cheque or LC is either for collection or held as a guarantee (cashed only if the client doesn't pay). */
-export enum PaymentPurpose {
-  PAYMENT = 'PAYMENT',
-  GUARANTEE = 'GUARANTEE',
-}
+
 
 /**
  * Money received from a client (counted once it is in the account). Cash clients must pay
@@ -417,12 +413,10 @@ export class Payment {
   @Column({ type: 'enum', enum: PaymentStatus, default: PaymentStatus.RECEIVED })
   status: PaymentStatus;
 
-  @Column({ type: 'enum', enum: PaymentPurpose, default: PaymentPurpose.PAYMENT })
-  purpose: PaymentPurpose;
-
   /**
-   * Management approval to raise the available credit by this amount while the cheque / LC is
-   * held (usually 90% of it). Ends by itself: collected, bounced, returned, or past its validity.
+   * Collection cheques: management approval to raise the available credit by this amount
+   * (100% unless stated) until it clears. Ends by itself: collected, bounced, or 3 days past its
+   * date. A payment LC counts in full while being collected, with no approval.
    */
   @Column({ type: 'numeric', precision: 14, scale: 2, nullable: true, transformer: numericTransformer })
   creditApprovedAmount: number | null;
@@ -500,4 +494,113 @@ export class OrderEvent {
 
   @CreateDateColumn({ type: 'timestamptz' })
   createdAt: Date;
+}
+
+export enum GuaranteeType {
+  /** Electronic promissory note (Nafith) */
+  EPN = 'EPN',
+  /** Letter of credit held as security */
+  LC = 'LC',
+  /** Bank letter of guarantee */
+  LG = 'LG',
+  CHEQUE = 'CHEQUE',
+  /** Management approved credit with no guarantee */
+  NO_GUARANTEE = 'NO_GUARANTEE',
+}
+
+export enum GuaranteeStatus {
+  ACTIVE = 'ACTIVE',
+  /** Given back to the client. */
+  RETURNED = 'RETURNED',
+  /** A guarantee cheque presented for collection: it became a payment. */
+  CONVERTED = 'CONVERTED',
+  /** A guarantee cheque that bounced: needs a replacement (transfer, LC or another guarantee). */
+  BOUNCED = 'BOUNCED',
+  EXPIRED = 'EXPIRED',
+}
+
+/** Security held for a client's credit: promissory notes, LCs, LGs, cheques, or an approval without any. */
+@Entity('client_guarantees')
+@Index(['clientId', 'status'])
+export class ClientGuarantee {
+  @PrimaryGeneratedColumn('uuid')
+  id: string;
+
+  @Column({ type: 'uuid' })
+  clientId: string;
+
+  @ManyToOne('Client', { onDelete: 'RESTRICT' })
+  client: Client;
+
+  @Column({ type: 'enum', enum: GuaranteeType })
+  type: GuaranteeType;
+
+  @Column({ type: 'enum', enum: GuaranteeStatus, default: GuaranteeStatus.ACTIVE })
+  status: GuaranteeStatus;
+
+  /** Value covered (null for an approval without a guarantee with no amount). */
+  @Column({ type: 'numeric', precision: 14, scale: 2, nullable: true, transformer: numericTransformer })
+  amount: number | null;
+
+  /** Number of the note, LC, LG or cheque. */
+  @Column({ type: 'varchar', length: 80, nullable: true })
+  reference: string | null;
+
+  /** Bank or issuer. */
+  @Column({ type: 'varchar', length: 120, nullable: true })
+  issuer: string | null;
+
+  /** Cheque date, or issue date of the note / LC / LG. */
+  @Column({ type: 'date', nullable: true })
+  date: string | null;
+
+  /** Expiry of an LG / LC / note. A guarantee cheque gets a reminder six months after its date. */
+  @Column({ type: 'date', nullable: true })
+  expiryDate: string | null;
+
+  @Column({ type: 'uuid', nullable: true })
+  fileId: string | null;
+
+  /**
+   * Cheques and LCs held as guarantees raise the available credit by this approved amount
+   * (100% unless stated) while ACTIVE.
+   */
+  @Column({ type: 'numeric', precision: 14, scale: 2, nullable: true, transformer: numericTransformer })
+  creditApprovedAmount: number | null;
+
+  /** Who approved (the credit on a cheque / LC, or credit without a guarantee). */
+  @Column({ type: 'varchar', length: 120, nullable: true })
+  approvedBy: string | null;
+
+  @Column({ type: 'date', nullable: true })
+  approvedAt: string | null;
+
+  @Column({ type: 'uuid', nullable: true })
+  approvalFileId: string | null;
+
+  /** A converted cheque's collection payment, or the payment that replaced a bounced one. */
+  @Column({ type: 'uuid', nullable: true })
+  paymentId: string | null;
+
+  /** The guarantee that replaced a bounced cheque. */
+  @Column({ type: 'uuid', nullable: true })
+  replacedByGuaranteeId: string | null;
+
+  @Column({ type: 'text', nullable: true })
+  notes: string | null;
+
+  @Column({ type: 'uuid' })
+  createdById: string;
+
+  @CreateDateColumn({ type: 'timestamptz' })
+  createdAt: Date;
+
+  @UpdateDateColumn({ type: 'timestamptz' })
+  updatedAt: Date;
+
+  @Column({ type: 'timestamptz', nullable: true })
+  removedAt: Date | null;
+
+  @Column({ type: 'text', nullable: true })
+  removedReason: string | null;
 }

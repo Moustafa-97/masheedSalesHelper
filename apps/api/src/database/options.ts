@@ -2,6 +2,7 @@ import type { DataSourceOptions } from 'typeorm';
 import { Client } from '../clients/client.entity.js';
 import { migrations } from '../migrations/index.js';
 import {
+  ClientGuarantee,
   ClientProject,
   Delivery,
   DeliveryLine,
@@ -33,6 +34,7 @@ export const entities = [
   SalesInvoice,
   Payment,
   OrderEvent,
+  ClientGuarantee,
 ];
 
 /**

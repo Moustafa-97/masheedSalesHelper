@@ -5,7 +5,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useState, type FormEvent } from "react";
 import { ItemPicker, ProjectForm, Stat } from "@/components/order-bits";
 import { Button, Card, Input, Notice, PageHeader, Select, Textarea } from "@/components/ui";
-import { api } from "@/lib/api";
+import { api, ApiError } from "@/lib/api";
 import { useAccount, useClients, useProjects, useVariants } from "@/lib/hooks";
 import { useI18n } from "@/lib/i18n";
 import { formatMoney, formatQty, today } from "@/lib/orders";
@@ -45,6 +45,8 @@ function NewOrderForm() {
   const [pick, setPick] = useState("");
   const [allCost, setAllCost] = useState("");
   const [allPrice, setAllPrice] = useState("");
+  const [bypassBy, setBypassBy] = useState("");
+  const [bypassReason, setBypassReason] = useState("");
   const { data: projects = [] } = useProjects(clientId || undefined);
   const { data: account } = useAccount(clientId || undefined);
 
@@ -76,6 +78,7 @@ function NewOrderForm() {
           projectId: projectId || null,
           orderDate,
           notes: notes.trim() || null,
+          overdueBypass: bypassBy.trim() && bypassReason.trim() ? { approvedBy: bypassBy, reason: bypassReason } : null,
           lines: lines.map((l) => ({
             variantId: l.variant.id,
             qty: num(l.qty),
@@ -92,6 +95,24 @@ function NewOrderForm() {
       router.push(`/orders/${order.id}`);
     },
   });
+
+  /** The API's English message, said in the page's language for the cases a rep meets every day. */
+  const errorText = (e: Error) => {
+    const err = e as ApiError;
+    if (err.code === "OVERDUE") {
+      return t("overdueStopped", {
+        amount: `\u2068${formatMoney(Number(err.data.overdue))}\u2069`,
+        n: Number(err.data.maxDaysOverdue),
+        stop: Number(err.data.overdueStopDays),
+      });
+    }
+    if (err.code === "CREDIT_LIMIT") {
+      return account && account.creditLimit > 0
+        ? t("overLimit", { n: `\u2068${formatMoney(Number(err.data.required) - Number(err.data.available))}\u2069` })
+        : t("cashNeedsPayment");
+    }
+    return e.message;
+  };
 
   const submit = (e: FormEvent) => {
     e.preventDefault();
@@ -211,7 +232,15 @@ function NewOrderForm() {
             {account.creditLimit > 0 ? t("overLimit", { n: formatMoney(over) }) : t("cashNeedsPayment")}
           </Notice>
         )}
-        {save.error && <Notice>{save.error.message}</Notice>}
+        {save.error && <Notice>{errorText(save.error)}</Notice>}
+        {(save.error as ApiError | null)?.code === "OVERDUE" && (
+          <div role="group" className="grid gap-2 rounded-xl bg-warn-bg p-3 md:grid-cols-2">
+            <p className="text-sm font-semibold md:col-span-2">{t("overdueBypass")}</p>
+            <p className="text-xs text-muted md:col-span-2">{t("overdueBypassHint")}</p>
+            <Input label={t("approvedBy")} value={bypassBy} onChange={(e) => setBypassBy(e.target.value)} />
+            <Input label={t("reason")} value={bypassReason} onChange={(e) => setBypassReason(e.target.value)} />
+          </div>
+        )}
         <div>
           <Button type="submit" disabled={save.isPending || !lines.length || !clientId}>
             {t("createOrder")}

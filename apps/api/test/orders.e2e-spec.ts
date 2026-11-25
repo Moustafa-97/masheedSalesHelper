@@ -290,7 +290,8 @@ describe('Orders (e2e)', () => {
     expect(cheque).toMatchObject({ status: 'PENDING', collectedDate: null });
 
     let account = (await as(rep).get(`${base}/account`)).body;
-    expect(account).toMatchObject({ paid: 80500, pending: 70000, available: 0 });
+    // The LC counts in full while being collected; the cheque needs an approval.
+    expect(account).toMatchObject({ paid: 80500, pending: 70000, approvedCredit: 20000, available: 20000 });
 
     await as(rep).put(`${base}/payments/${cheque.id}/status`, { status: 'RECEIVED', collectedDate: '2026-12-10' }).expect(200);
     await as(rep).put(`${base}/payments/${lc.id}/status`, { status: 'BOUNCED', reason: 'Documents rejected' }).expect(200);
@@ -383,28 +384,6 @@ describe('Orders (e2e)', () => {
       expect(account.available).toBe(Math.round((before + 100000 - 115000) * 100) / 100);
     });
 
-    it('holds a guarantee cheque for six months, then returns it to the client', async () => {
-      const g = (
-        await as(rep)
-          .post(`${base()}/payments`, { amount: 200000, date: future(0), method: 'CHEQUE', purpose: 'GUARANTEE', dueDate: future(0) })
-          .expect(201)
-      ).body;
-      expect(g).toMatchObject({ purpose: 'GUARANTEE', status: 'PENDING' });
-      await as(rep).put(`${base()}/payments/${g.id}/approval`, { amount: 180000, approvedBy: 'GM' }).expect(200);
-      let account = (await as(rep).get(`${base()}/account`)).body;
-      expect(account).toMatchObject({ guarantees: 200000, approvedCredit: 180000 });
-      const statement = (await as(rep).get(`${base()}/statement`)).body;
-      expect(statement.guarantees.map((x: { id: string }) => x.id)).toEqual([g.id]);
-
-      await as(rep).put(`${base()}/payments/${g.id}/status`, { status: 'RETURNED', reason: 'Paid by transfer' }).expect(200);
-      account = (await as(rep).get(`${base()}/account`)).body;
-      expect(account).toMatchObject({ guarantees: 0, approvedCredit: 0 });
-
-      await as(rep).post(`${base()}/payments`, { amount: 10, date: future(0), method: 'TRANSFER', purpose: 'GUARANTEE' }).expect(400);
-      const transfer = (await as(rep).post(`${base()}/payments`, { amount: 10, date: future(0) }).expect(201)).body;
-      await as(rep).put(`${base()}/payments/${transfer.id}/status`, { status: 'RETURNED' }).expect(400);
-    });
-
     it('stops counting an approval past its date and lists the cheque for an update', async () => {
       const old = (
         await as(rep).post(`${base()}/payments`, { amount: 50000, date: future(-30), method: 'CHEQUE', dueDate: future(-10) }).expect(201)
@@ -413,8 +392,129 @@ describe('Orders (e2e)', () => {
       const account = (await as(rep).get(`${base()}/account`)).body;
       expect(account.approvedCredit).toBe(0);
       const summary = (await as(rep).get('/orders/summary')).body;
-      expect(summary.chequesToUpdate).toEqual([expect.objectContaining({ id: old.id, clientName: 'Cash Co', approved: true })]);
-      expect((await as(otherRep).get('/orders/summary')).body.chequesToUpdate).toEqual([]);
+      expect(summary.followUps).toEqual([expect.objectContaining({ id: old.id, kind: 'CHEQUE_DUE', clientName: 'Cash Co' })]);
+      expect((await as(otherRep).get('/orders/summary')).body.followUps).toEqual([]);
+      await as(rep).put(`${base()}/payments/${old.id}/status`, { status: 'BOUNCED', reason: 'test' }).expect(200);
+    });
+
+    it('counts a payment LC in full while collected, and flags it after 20 days', async () => {
+      const lc = (
+        await as(rep).post(`${base()}/payments`, { amount: 30000, date: future(-25), method: 'LC', dueDate: future(-25) }).expect(201)
+      ).body;
+      await as(rep).put(`${base()}/payments/${lc.id}/approval`, { amount: 1, approvedBy: 'x' }).expect(400); // LCs need none
+      const before = (await as(rep).get(`${base()}/account`)).body;
+      expect(before.approvedCredit).toBe(30000);
+      const row = (await as(rep).get(`${base()}/payments`)).body.find((p: { id: string }) => p.id === lc.id);
+      expect(row.lcAttention).toBe(true);
+      expect((await as(rep).get('/orders/summary')).body.followUps).toEqual([expect.objectContaining({ id: lc.id, kind: 'LC_ATTENTION' })]);
+      await as(rep).put(`${base()}/payments/${lc.id}/status`, { status: 'RECEIVED' }).expect(200);
+      const after = (await as(rep).get(`${base()}/account`)).body;
+      expect(after.approvedCredit).toBe(0);
+      expect(after.available).toBe(before.available); // moved from temporary credit to paid
+    });
+  });
+
+  describe('guarantees', () => {
+    let gClient: string;
+    const g = (path = '') => `/clients/${gClient}/guarantees${path}`;
+    beforeAll(async () => {
+      const repId = (await as(rep).get('/auth/me')).body.id;
+      gClient = (await as(admin).post('/clients', { name: 'Guarded Co', creditLimit: 1000000, paymentTermsDays: 60, repId })).body.id;
+    });
+
+    it('keeps notes, LGs and cheques, with coverage of the limit', async () => {
+      await as(rep).post(g(), { type: 'EPN', amount: 500000, reference: 'NFT-1', expiryDate: '2027-12-31' }).expect(201);
+      await as(rep).post(g(), { type: 'LG', amount: 200000, issuer: 'SNB', expiryDate: '2027-06-30' }).expect(201);
+      await as(rep).post(g(), { type: 'EPN' }).expect(400); // amount
+      await as(rep).post(g(), { type: 'NO_GUARANTEE' }).expect(400); // who approved
+      await as(rep).post(g(), { type: 'NO_GUARANTEE', approvedBy: 'GM', notes: 'Strategic client' }).expect(201);
+      const credit = (await as(rep).get(`/clients/${gClient}/credit`)).body;
+      expect(credit.account).toMatchObject({ guarantees: 700000, approvedCredit: 0, available: 1000000 });
+      expect(credit.profile).toMatchObject({ coveragePct: 70, noGuaranteeApproval: { approvedBy: 'GM' } });
+      await as(otherRep).get(g()).expect(404);
+    });
+
+    it('adds an approved guarantee cheque to the credit until it bounces, then needs a replacement', async () => {
+      const cheque = (
+        await as(rep)
+          .post(g(), { type: 'CHEQUE', amount: 300000, date: '2026-11-01', creditApprovedAmount: 300000, approvedBy: 'Sales manager' })
+          .expect(201)
+      ).body;
+      let credit = (await as(rep).get(`/clients/${gClient}/credit`)).body;
+      expect(credit.account).toMatchObject({ approvedCredit: 300000, available: 1300000, guarantees: 1000000 });
+
+      await as(rep).put(g(`/${cheque.id}/status`), { status: 'BOUNCED', reason: 'No funds' }).expect(200);
+      credit = (await as(rep).get(`/clients/${gClient}/credit`)).body;
+      expect(credit.account.approvedCredit).toBe(0);
+      expect(credit.profile.awaitingReplacement).toBe(1);
+      expect((await as(rep).get('/orders/summary')).body.followUps).toEqual(
+        expect.arrayContaining([expect.objectContaining({ id: cheque.id, kind: 'AWAITING_REPLACEMENT' })]),
+      );
+
+      const chequePay = (
+        await as(rep).post(`/clients/${gClient}/payments`, { amount: 300000, date: '2026-11-25', method: 'CHEQUE', dueDate: '2026-12-01' })
+      ).body;
+      await as(rep).put(g(`/${cheque.id}/replacement`), { paymentId: chequePay.id }).expect(400); // a transfer or LC
+      const transfer = (await as(rep).post(`/clients/${gClient}/payments`, { amount: 300000, date: '2026-11-25' })).body;
+      await as(rep).put(g(`/${cheque.id}/replacement`), { paymentId: transfer.id }).expect(200);
+      credit = (await as(rep).get(`/clients/${gClient}/credit`)).body;
+      expect(credit.profile.awaitingReplacement).toBe(0);
+    });
+
+    it('presents a guarantee cheque for collection, carrying its approval', async () => {
+      const cheque = (
+        await as(rep).post(g(), { type: 'CHEQUE', amount: 100000, date: '2026-11-20', creditApprovedAmount: 100000, approvedBy: 'GM' })
+      ).body;
+      const payment = (await as(rep).post(g(`/${cheque.id}/convert`), {}).expect(201)).body;
+      expect(payment).toMatchObject({ method: 'CHEQUE', status: 'PENDING', amount: 100000, creditApprovedAmount: 100000 });
+      const list = (await as(rep).get(g())).body;
+      expect(list.find((x: { id: string }) => x.id === cheque.id)).toMatchObject({ status: 'CONVERTED', paymentId: payment.id });
+      await as(rep).put(g(`/${cheque.id}/status`), { status: 'RETURNED' }).expect(400); // no longer held
+    });
+  });
+
+  describe('aging and the overdue stop', () => {
+    let late: string;
+    const ago = (days: number) => new Date(Date.now() - days * 86_400_000).toISOString().slice(0, 10);
+    beforeAll(async () => {
+      const repId = (await as(rep).get('/auth/me')).body.id;
+      late = (await as(admin).post('/clients', { name: 'Late Co', creditLimit: 1000000, paymentTermsDays: 30, repId })).body.id;
+    });
+    const order = (number: string, daysAgo: number, price = 1000) =>
+      newOrder({ number, clientId: late, projectId: null, orderDate: ago(daysAgo), lines: [{ variantId: rebar12, qty: 25, unitPrice: price }] });
+
+    it('ages unpaid orders oldest first and measures collection days', async () => {
+      await as(rep).post('/orders', order('LATE-1', 100)).expect(201); // 28,750, due 70 days ago
+      // paid 40 days after the order: it covers LATE-1 in full
+      await as(rep).post(`/clients/${late}/payments`, { amount: 28750, date: ago(60) }).expect(201);
+      await as(rep).post('/orders', order('LATE-2', 10)).expect(201); // not due yet
+      let p = (await as(rep).get(`/clients/${late}/credit`)).body.profile;
+      expect(p).toMatchObject({ overdue: 0, avgCollectionDays: 40, paidOrders: 1, overdueStop: false });
+      expect(p.items.map((i: { reference: string }) => i.reference)).toEqual(['LATE-2']);
+
+      await as(rep).post('/orders', order('LATE-3', 80)).expect(201); // due 50 days ago
+      p = (await as(rep).get(`/clients/${late}/credit`)).body.profile;
+      expect(p.aging).toMatchObject({ current: 28750, d31_60: 28750 });
+      expect(p).toMatchObject({ maxDaysOverdue: 50, overdueStop: true, overdueStopDays: 30 });
+    });
+
+    it('stops new orders when overdue, unless management approves', async () => {
+      const res = await as(rep).post('/orders', order('LATE-4', 0)).expect(422);
+      expect(res.body).toMatchObject({ code: 'OVERDUE', maxDaysOverdue: 50 });
+      await as(rep).post('/orders', { ...order('LATE-4', 0), overdueBypass: { approvedBy: 'GM' } }).expect(400);
+      const ok = await as(rep)
+        .post('/orders', { ...order('LATE-4', 0), overdueBypass: { approvedBy: 'GM', reason: 'Cheque promised Sunday' } })
+        .expect(201);
+      expect(ok.body.events[0].data.overdueBypass).toMatchObject({ approvedBy: 'GM', maxDaysOverdue: 50 });
+    });
+
+    it('lets an admin turn the stop off or change its days per client', async () => {
+      await as(rep).patch(`/clients/${late}`, { overdueStopDays: 0 }).expect(403);
+      await as(admin).patch(`/clients/${late}`, { overdueStopDays: 60 }).expect(200);
+      await as(rep).post('/orders', order('LATE-5', 0)).expect(201);
+      const summary = (await as(rep).get('/orders/summary')).body;
+      expect(summary.overdueClients.map((c: { clientName: string }) => c.clientName)).toContain('Late Co');
+      expect(summary.receivables.overdue).toBeGreaterThan(0);
     });
   });
 });

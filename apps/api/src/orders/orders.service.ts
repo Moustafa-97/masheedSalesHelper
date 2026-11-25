@@ -11,7 +11,24 @@ import { Client, ClientStatus } from '../clients/client.entity.js';
 import { ProductVariant } from '../products/product.entities.js';
 import { Role, User } from '../users/user.entity.js';
 import { isUniqueViolation } from '../users/users.module.js';
-import { AccountService, addDays, APPROVAL_UNTIL_SQL, orderTotals } from './account.service.js';
+import {
+  AccountService,
+  addDays,
+  GUARANTEE_REMINDER_MONTHS,
+  LC_ATTENTION_DAYS,
+  orderTotals,
+} from './account.service.js';
+
+export interface FollowUp {
+  id: string;
+  source: 'PAYMENT' | 'GUARANTEE';
+  kind: 'CHEQUE_DUE' | 'LC_ATTENTION' | 'GUARANTEE_OLD' | 'GUARANTEE_EXPIRING' | 'AWAITING_REPLACEMENT';
+  type: string;
+  amount: number | null;
+  date: string | null;
+  clientId: string;
+  clientName: string;
+}
 import {
   ClientProject,
   Delivery,
@@ -33,6 +50,7 @@ import {
   CreateOrderDto,
   ListOrdersQuery,
   OrderLineDto,
+  OverdueBypassDto,
   UpdateLineDto,
   UpdateOrderDto,
 } from './orders.dto.js';
@@ -126,30 +144,8 @@ export class OrdersService {
     const stale = open
       .filter((o) => new Date(o.lastActivityAt).getTime() < cutoff)
       .sort((a, b) => new Date(a.lastActivityAt).getTime() - new Date(b.lastActivityAt).getTime());
-    const qb = this.dataSource
-      .createQueryBuilder()
-      .select(['p.id AS id', 'p.method AS method', 'p.purpose AS purpose', 'p.amount::float AS amount'])
-      .addSelect(`to_char(p."dueDate", 'YYYY-MM-DD')`, 'dueDate')
-      .addSelect('c.id', 'clientId')
-      .addSelect('c.name', 'clientName')
-      .addSelect('p."creditApprovedAmount" IS NOT NULL', 'approved')
-      .from('payments', 'p')
-      .innerJoin('clients', 'c', 'c.id = p."clientId"')
-      .where(`p.status = 'PENDING' AND p."removedAt" IS NULL`)
-      // Collection cheques past their date; guarantees past their six months.
-      .andWhere(`CURRENT_DATE > (CASE WHEN p.purpose = 'GUARANTEE' THEN ${APPROVAL_UNTIL_SQL.replaceAll('"dueDate"', 'p."dueDate"').replaceAll('purpose', 'p.purpose')} ELSE p."dueDate" END)`)
-      .orderBy('p."dueDate"', 'ASC');
-    if (user.role === Role.REP) qb.andWhere('c."repId" = :repId', { repId: user.id });
-    const chequesToUpdate: {
-      id: string;
-      method: string;
-      purpose: string;
-      amount: number;
-      dueDate: string;
-      clientId: string;
-      clientName: string;
-      approved: boolean;
-    }[] = await qb.getRawMany();
+    const followUps = await this.followUps(user);
+    const credit = await this.creditWatch(user);
     return {
       open: open.length,
       done,
@@ -157,8 +153,79 @@ export class OrdersService {
       staleDays,
       stale: stale.slice(0, 10),
       staleCount: stale.length,
-      chequesToUpdate,
+      followUps,
+      ...credit,
       byStatus: open.reduce<Record<string, number>>((acc, o) => ((acc[o.status] = (acc[o.status] ?? 0) + 1), acc), {}),
+    };
+  }
+
+  /**
+   * Cheques, LCs and guarantees that need an action: collection cheques past their date, payment
+   * LCs still being collected after 20 days, guarantee cheques older than six months, guarantees
+   * expiring within 30 days, and bounced guarantee cheques with no replacement.
+   */
+  private async followUps(user: User) {
+    const rep = user.role === Role.REP ? user.id : null;
+    const rows: FollowUp[] = await this.dataSource.query(
+      `SELECT * FROM (
+         SELECT p.id, 'PAYMENT' AS source, CASE WHEN p.method = 'LC' THEN 'LC_ATTENTION' ELSE 'CHEQUE_DUE' END AS kind,
+                p.method::text AS type, p.amount::float AS amount, to_char(p."dueDate", 'YYYY-MM-DD') AS date,
+                c.id AS "clientId", c.name AS "clientName"
+           FROM payments p JOIN clients c ON c.id = p."clientId"
+          WHERE p.status = 'PENDING' AND p."removedAt" IS NULL AND ($1::uuid IS NULL OR c."repId" = $1)
+            AND ((p.method = 'CHEQUE' AND CURRENT_DATE > p."dueDate")
+              OR (p.method = 'LC' AND CURRENT_DATE > COALESCE(p."dueDate", p.date) + ${LC_ATTENTION_DAYS}))
+         UNION ALL
+         SELECT g.id, 'GUARANTEE', CASE
+                  WHEN g.status = 'BOUNCED' THEN 'AWAITING_REPLACEMENT'
+                  WHEN g.type = 'CHEQUE' AND g."expiryDate" IS NULL THEN 'GUARANTEE_OLD'
+                  ELSE 'GUARANTEE_EXPIRING' END,
+                g.type::text, g.amount::float,
+                to_char(CASE WHEN g.type = 'CHEQUE' AND g."expiryDate" IS NULL
+                             THEN g.date + INTERVAL '${GUARANTEE_REMINDER_MONTHS} months' ELSE g."expiryDate" END, 'YYYY-MM-DD'),
+                c.id, c.name
+           FROM client_guarantees g JOIN clients c ON c.id = g."clientId"
+          WHERE g."removedAt" IS NULL AND ($1::uuid IS NULL OR c."repId" = $1)
+            AND ((g.status = 'BOUNCED' AND g."paymentId" IS NULL AND g."replacedByGuaranteeId" IS NULL)
+              OR (g.status = 'ACTIVE' AND g.type = 'CHEQUE' AND g."expiryDate" IS NULL
+                  AND CURRENT_DATE > g.date + INTERVAL '${GUARANTEE_REMINDER_MONTHS} months')
+              OR (g.status = 'ACTIVE' AND g."expiryDate" IS NOT NULL AND g."expiryDate" <= CURRENT_DATE + 30))
+       ) f ORDER BY date NULLS FIRST`,
+      [rep],
+    );
+    return rows;
+  }
+
+  /** Active clients near their limit (75%+) or past due, for the dashboard. */
+  private async creditWatch(user: User) {
+    const qb = this.dataSource.getRepository(Client).createQueryBuilder('c').where('c.status = :s', { s: ClientStatus.ACTIVE });
+    if (user.role === Role.REP) qb.andWhere('c.repId = :repId', { repId: user.id });
+    const clients = await qb.getMany();
+    const rows = await Promise.all(
+      clients.map(async (c) => {
+        const [account, profile] = await Promise.all([this.accounts.account(c), this.accounts.profile(c)]);
+        return {
+          clientId: c.id,
+          clientName: c.name,
+          creditLimit: account.creditLimit,
+          balance: account.balance,
+          available: account.available,
+          usagePct: account.usagePct,
+          overdue: profile.overdue,
+          maxDaysOverdue: profile.maxDaysOverdue,
+          overdueStop: profile.overdueStop,
+          awaitingReplacement: profile.awaitingReplacement,
+        };
+      }),
+    );
+    const totals = rows.reduce(
+      (t, r) => ({ balance: t.balance + r.balance, overdue: t.overdue + r.overdue }),
+      { balance: 0, overdue: 0 },
+    );
+    return {
+      nearLimit: rows.filter((r) => r.usagePct !== null && r.usagePct >= 75).sort((a, b) => b.usagePct! - a.usagePct!),
+      overdueClients: rows.filter((r) => r.overdue > 0).sort((a, b) => b.maxDaysOverdue - a.maxDaysOverdue),
+      receivables: { balance: Math.round(totals.balance * 100) / 100, overdue: Math.round(totals.overdue * 100) / 100 },
     };
   }
 
@@ -253,6 +320,7 @@ export class OrdersService {
         }),
       );
       const total = orderTotals(lines, order.vatRate).total;
+      const bypass = await this.overdueCheck(m, client, dto.overdueBypass);
       const account = await this.creditCheck(m, client, total);
       await m.save(lines.map((l, i) => m.create(OrderLine, { ...l, orderId: order.id, position: i })));
       await this.event(m, order.id, user, 'CREATED', {
@@ -262,6 +330,7 @@ export class OrdersService {
         ...(account && account.approvedCredit > 0 && total > account.available - account.approvedCredit + 0.005
           ? { usedApprovedCredit: account.approvedCredit }
           : {}),
+        ...(bypass ? { overdueBypass: bypass } : {}),
       });
       return order.id;
     });
@@ -644,6 +713,25 @@ export class OrdersService {
   ) {
     const lines: PricedLine[] = await m.find(OrderLine, { where: { orderId: order.id, removedAt: IsNull() } });
     return orderTotals(change(lines), order.vatRate).total - orderTotals(lines, order.vatRate).total;
+  }
+
+  /**
+   * New orders stop while the client has an amount past due for longer than their overdue-stop
+   * days, unless management approved going ahead (who and why are kept with the order).
+   */
+  private async overdueCheck(m: EntityManager, client: Client, bypass?: OverdueBypassDto | null) {
+    const profile = await this.accounts.profile(client, m);
+    if (!profile.overdueStop) return null;
+    if (bypass?.approvedBy?.trim() && bypass.reason?.trim()) {
+      return { approvedBy: bypass.approvedBy.trim(), reason: bypass.reason.trim(), overdue: profile.overdue, maxDaysOverdue: profile.maxDaysOverdue };
+    }
+    throw new UnprocessableEntityException({
+      message: `Overdue: ${profile.overdue.toFixed(2)} past due, up to ${profile.maxDaysOverdue} days (stop after ${profile.overdueStopDays}). Collect first or add a management approval`,
+      code: 'OVERDUE',
+      overdue: profile.overdue,
+      maxDaysOverdue: profile.maxDaysOverdue,
+      overdueStopDays: profile.overdueStopDays,
+    });
   }
 
   private async creditCheck(m: EntityManager, client: Client, extra: number) {

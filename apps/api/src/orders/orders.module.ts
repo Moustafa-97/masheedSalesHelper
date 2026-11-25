@@ -20,7 +20,9 @@ import { AccountService } from './account.service.js';
 import { ClientAccountController } from './client-account.controller.js';
 import { FileStorage, LocalFileStorage } from './file-storage.js';
 import { FilesController } from './files.controller.js';
+import { GuaranteesController } from './guarantees.controller.js';
 import {
+  ClientGuarantee,
   ClientProject,
   Delivery,
   DeliveryLine,
@@ -199,9 +201,10 @@ export class OrdersController {
       SalesInvoice,
       Payment,
       OrderEvent,
+      ClientGuarantee,
     ]),
   ],
-  controllers: [OrdersController, ClientAccountController, FilesController],
+  controllers: [OrdersController, ClientAccountController, GuaranteesController, FilesController],
   providers: [
     AccountService,
     OrdersService,

@@ -6,6 +6,8 @@ import type {
   Brand,
   Client,
   ClientAccount,
+  CreditProfile,
+  Guarantee,
   ClientProject,
   OrderDetail,
   OrderSummary,
@@ -83,3 +85,12 @@ export const useStatement = (clientId: string, from?: string, to?: string) =>
     queryKey: ["statement", clientId, from, to],
     queryFn: () => api<Statement>(`/clients/${clientId}/statement${query({ from, to })}`),
   });
+
+export const useCredit = (clientId: string) =>
+  useQuery({
+    queryKey: ["account", clientId, "credit"],
+    queryFn: () => api<{ account: ClientAccount; profile: CreditProfile }>(`/clients/${clientId}/credit`),
+  });
+
+export const useGuarantees = (clientId: string) =>
+  useQuery({ queryKey: ["guarantees", clientId], queryFn: () => api<Guarantee[]>(`/clients/${clientId}/guarantees`) });

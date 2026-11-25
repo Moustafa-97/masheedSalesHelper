@@ -8,6 +8,7 @@ import { Button, Card, Input, Muted, PageHeader } from "@/components/ui";
 import { useStatement } from "@/lib/hooks";
 import { useI18n } from "@/lib/i18n";
 import { formatMoney } from "@/lib/orders";
+import type { GuaranteeType, PaymentMethod } from "@/lib/types";
 
 const query = (from: string, to: string) => {
   const q = new URLSearchParams(Object.entries({ from, to }).filter(([, v]) => v)).toString();
@@ -113,8 +114,8 @@ export default function StatementPage() {
           </Card>
 
           {[
-            { list: st.pending, title: t("pendingNotCounted"), dateLabel: t("chequeDueDate") },
-            { list: st.guarantees, title: t("guaranteesNotCounted"), dateLabel: t("chequeDate") },
+            { list: st.pending, title: t("pendingNotCounted"), dateLabel: t("chequeDueDate"), guarantee: false },
+            { list: st.guarantees, title: t("guarantees"), dateLabel: t("expiryDate"), guarantee: true },
           ]
             .filter((g) => g.list.length > 0)
             .map((g) => (
@@ -123,7 +124,8 @@ export default function StatementPage() {
                 <ul className="flex flex-col gap-1 text-sm">
                   {g.list.map((p) => (
                     <li key={p.id}>
-                      <bdi className="font-semibold">{formatMoney(p.amount)}</bdi> · {t(`method.${p.method}`)}
+                      {p.amount !== null && <><bdi className="font-semibold">{formatMoney(p.amount)}</bdi> · </>}
+                      {g.guarantee ? t(`gType.${p.method as GuaranteeType}`) : t(`method.${p.method as PaymentMethod}`)}
                       {p.bank && ` · ${p.bank}`}
                       {p.reference && <> · <bdi>{p.reference}</bdi></>}
                       {p.dueDate && <> · {g.dateLabel} <bdi>{p.dueDate}</bdi></>}

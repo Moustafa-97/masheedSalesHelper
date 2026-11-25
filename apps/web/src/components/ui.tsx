@@ -36,7 +36,9 @@ export function Button({
 }
 
 export function Card({ className, children }: { className?: string; children: ReactNode }) {
-  return <section className={clsx("rounded-2xl bg-white p-4 shadow-sm", className)}>{children}</section>;
+  // White unless the caller gives its own background (e.g. a warning tint).
+  const tinted = /(^|\s)bg-/.test(className ?? "");
+  return <section className={clsx("rounded-2xl p-4 shadow-sm", !tinted && "bg-white", className)}>{children}</section>;
 }
 
 export function PageHeader({ title, subtitle, actions }: { title: string; subtitle?: string; actions?: ReactNode }) {

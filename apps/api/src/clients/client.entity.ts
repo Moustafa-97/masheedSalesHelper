@@ -56,6 +56,13 @@ export class Client {
   @Column({ type: 'int', default: 0 })
   paymentTermsDays: number;
 
+  /**
+   * New orders stop when an amount is more than this many days past due.
+   * Null uses the default (30); 0 turns the stop off for this client.
+   */
+  @Column({ type: 'int', nullable: true })
+  overdueStopDays: number | null;
+
   @Column({
     type: 'numeric',
     precision: 14,

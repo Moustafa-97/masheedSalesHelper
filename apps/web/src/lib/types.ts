@@ -29,6 +29,7 @@ export interface Client {
   crNumber: string | null;
   vatNumber: string | null;
   paymentTermsDays: number;
+  overdueStopDays: number | null;
   creditLimit: number;
   openingBalance: number;
   purchasingName: string | null;
@@ -107,6 +108,7 @@ export interface ClientAccount {
   pending: number;
   guarantees: number;
   approvedCredit: number;
+  usagePct: number | null;
   balance: number;
   available: number;
   paymentTermsDays: number;
@@ -129,7 +131,7 @@ export interface Payment {
   date: string;
   method: PaymentMethod;
   status: "PENDING" | "RECEIVED" | "BOUNCED" | "RETURNED";
-  purpose: "PAYMENT" | "GUARANTEE";
+  lcAttention: boolean;
   creditApprovedAmount: number | null;
   approvedBy: string | null;
   approvedAt: string | null;
@@ -185,16 +187,10 @@ export interface OrdersSummary {
   staleDays: number;
   staleCount: number;
   stale: OrderSummary[];
-  chequesToUpdate: {
-    id: string;
-    method: PaymentMethod;
-    purpose: "PAYMENT" | "GUARANTEE";
-    amount: number;
-    dueDate: string;
-    clientId: string;
-    clientName: string;
-    approved: boolean;
-  }[];
+  followUps: FollowUp[];
+  nearLimit: CreditWatchRow[];
+  overdueClients: CreditWatchRow[];
+  receivables: { balance: number; overdue: number };
   byStatus: Partial<Record<OrderStatus, number>>;
 }
 
@@ -211,9 +207,9 @@ export interface StatementEntry {
 
 export interface StatementHeld {
   id: string;
-  method: PaymentMethod;
-  amount: number;
-  date: string;
+  method: PaymentMethod | GuaranteeType;
+  amount: number | null;
+  date: string | null;
   dueDate: string | null;
   reference: string | null;
   bank: string | null;
@@ -323,4 +319,79 @@ export interface OrderDetail {
   invoices: SalesInvoice[];
   events: OrderEvent[];
   createdAt: string;
+}
+
+export interface FollowUp {
+  id: string;
+  source: "PAYMENT" | "GUARANTEE";
+  kind: "CHEQUE_DUE" | "LC_ATTENTION" | "GUARANTEE_OLD" | "GUARANTEE_EXPIRING" | "AWAITING_REPLACEMENT";
+  type: string;
+  amount: number | null;
+  date: string | null;
+  clientId: string;
+  clientName: string;
+}
+
+export interface CreditWatchRow {
+  clientId: string;
+  clientName: string;
+  creditLimit: number;
+  balance: number;
+  available: number;
+  usagePct: number | null;
+  overdue: number;
+  maxDaysOverdue: number;
+  overdueStop: boolean;
+  awaitingReplacement: number;
+}
+
+export type AgingBucket = "current" | "d1_30" | "d31_60" | "d61_90" | "d90plus";
+
+export interface CreditProfile {
+  aging: Record<AgingBucket, number>;
+  items: {
+    type: "OPENING" | "ORDER";
+    id: string | null;
+    reference: string;
+    date: string;
+    dueDate: string;
+    amount: number;
+    outstanding: number;
+    daysOverdue: number;
+    bucket: AgingBucket;
+  }[];
+  overdue: number;
+  maxDaysOverdue: number;
+  unapplied: number;
+  avgCollectionDays: number | null;
+  paidOrders: number;
+  coveragePct: number | null;
+  noGuaranteeApproval: { approvedBy: string | null; approvedAt: string | null; amount: number | null } | null;
+  awaitingReplacement: number;
+  overdueStopDays: number;
+  overdueStop: boolean;
+}
+
+export type GuaranteeType = "EPN" | "LC" | "LG" | "CHEQUE" | "NO_GUARANTEE";
+
+export interface Guarantee {
+  id: string;
+  type: GuaranteeType;
+  status: "ACTIVE" | "RETURNED" | "CONVERTED" | "BOUNCED" | "EXPIRED";
+  amount: number | null;
+  reference: string | null;
+  issuer: string | null;
+  date: string | null;
+  expiryDate: string | null;
+  file: FileMeta | null;
+  creditApprovedAmount: number | null;
+  approvedBy: string | null;
+  approvedAt: string | null;
+  approvalFile: FileMeta | null;
+  paymentId: string | null;
+  replacedByGuaranteeId: string | null;
+  awaitingReplacement: boolean;
+  notes: string | null;
+  removedAt: string | null;
+  removedReason: string | null;
 }

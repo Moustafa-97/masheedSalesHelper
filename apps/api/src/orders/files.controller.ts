@@ -89,7 +89,10 @@ export class FilesController {
         WHERE d."fileId" = $1 AND c."repId" = $2
        UNION ALL
        SELECT 1 FROM payments p JOIN clients c ON c.id = p."clientId"
-        WHERE p."fileId" = $1 AND c."repId" = $2
+        WHERE (p."fileId" = $1 OR p."approvalFileId" = $1) AND c."repId" = $2
+       UNION ALL
+       SELECT 1 FROM client_guarantees g JOIN clients c ON c.id = g."clientId"
+        WHERE (g."fileId" = $1 OR g."approvalFileId" = $1) AND c."repId" = $2
        LIMIT 1`,
       [file.id, user.id],
     );

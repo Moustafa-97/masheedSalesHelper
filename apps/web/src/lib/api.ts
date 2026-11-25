@@ -2,6 +2,10 @@ export class ApiError extends Error {
   constructor(
     public readonly status: number,
     message: string,
+    /** The API's error code, e.g. CREDIT_LIMIT or OVERDUE. */
+    public readonly code?: string,
+    /** The rest of the error body (amounts, days…). */
+    public readonly data: Record<string, unknown> = {},
   ) {
     super(message);
   }
@@ -34,13 +38,17 @@ export async function api<T = unknown>(
   }
   if (!res.ok) {
     let message = res.statusText;
+    let code: string | undefined;
+    let data: Record<string, unknown> = {};
     try {
-      const data = await res.json();
-      message = Array.isArray(data.message) ? data.message.join("، ") : (data.message ?? message);
+      const body = await res.json();
+      message = Array.isArray(body.message) ? body.message.join("، ") : (body.message ?? message);
+      code = body.code;
+      data = body;
     } catch {
       /* not JSON */
     }
-    throw new ApiError(res.status, message);
+    throw new ApiError(res.status, message, code, data);
   }
   if (res.status === 204) return undefined as T;
   return res.json() as Promise<T>;
