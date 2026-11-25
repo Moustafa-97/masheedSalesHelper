@@ -374,6 +374,14 @@ export enum PaymentStatus {
   PENDING = 'PENDING',
   RECEIVED = 'RECEIVED',
   BOUNCED = 'BOUNCED',
+  /** A guarantee cheque or LC given back to the client (they paid another way). */
+  RETURNED = 'RETURNED',
+}
+
+/** A cheque or LC is either for collection or held as a guarantee (cashed only if the client doesn't pay). */
+export enum PaymentPurpose {
+  PAYMENT = 'PAYMENT',
+  GUARANTEE = 'GUARANTEE',
 }
 
 /**
@@ -408,6 +416,26 @@ export class Payment {
 
   @Column({ type: 'enum', enum: PaymentStatus, default: PaymentStatus.RECEIVED })
   status: PaymentStatus;
+
+  @Column({ type: 'enum', enum: PaymentPurpose, default: PaymentPurpose.PAYMENT })
+  purpose: PaymentPurpose;
+
+  /**
+   * Management approval to raise the available credit by this amount while the cheque / LC is
+   * held (usually 90% of it). Ends by itself: collected, bounced, returned, or past its validity.
+   */
+  @Column({ type: 'numeric', precision: 14, scale: 2, nullable: true, transformer: numericTransformer })
+  creditApprovedAmount: number | null;
+
+  @Column({ type: 'varchar', length: 120, nullable: true })
+  approvedBy: string | null;
+
+  @Column({ type: 'date', nullable: true })
+  approvedAt: string | null;
+
+  /** The approval itself (email or WhatsApp screenshot). */
+  @Column({ type: 'uuid', nullable: true })
+  approvalFileId: string | null;
 
   /** Cheque date or LC maturity date. */
   @Column({ type: 'date', nullable: true })

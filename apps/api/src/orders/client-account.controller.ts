@@ -20,10 +20,11 @@ import { DataSource, IsNull } from 'typeorm';
 import { CurrentUser, Roles } from '../common/auth.decorators.js';
 import { Role, User } from '../users/user.entity.js';
 import { isUniqueViolation } from '../users/users.module.js';
-import { AccountService, buildStatement } from './account.service.js';
-import { ClientProject, Order, Payment, PaymentMethod, PaymentStatus, StoredFile } from './order.entities.js';
+import { AccountService, APPROVAL_UNTIL_SQL, buildStatement } from './account.service.js';
+import { ClientProject, Order, Payment, PaymentMethod, PaymentPurpose, PaymentStatus, StoredFile } from './order.entities.js';
 import {
   AddPaymentDto,
+  CreditApprovalDto,
   PaymentStatusDto,
   ProjectDto,
   ReasonDto,
@@ -109,17 +110,28 @@ export class ClientAccountController {
   @Get('payments')
   async payments(@CurrentUser() user: User, @Param('clientId', ParseUUIDPipe) clientId: string) {
     await this.accounts.clientFor(user, clientId);
-    const rows = await this.dataSource.getRepository(Payment).find({
-      where: { clientId },
-      order: { date: 'DESC', createdAt: 'DESC' },
-    });
-    const files = rows.some((p) => p.fileId)
-      ? await this.dataSource.getRepository(StoredFile).findBy(
-          rows.filter((p) => p.fileId).map((p) => ({ id: p.fileId! })),
-        )
-      : [];
+    const rows: (Payment & { approvalUntil: string | null; approvalValid: boolean })[] = await this.dataSource
+      .getRepository(Payment)
+      .createQueryBuilder('p')
+      .addSelect(`to_char(${APPROVAL_UNTIL_SQL.replaceAll('"dueDate"', 'p."dueDate"').replaceAll('purpose', 'p.purpose')}, 'YYYY-MM-DD')`, 'approval_until')
+      .where('p.clientId = :clientId', { clientId })
+      .orderBy('p.date', 'DESC')
+      .addOrderBy('p.createdAt', 'DESC')
+      .getRawAndEntities()
+      .then(({ entities, raw }) =>
+        entities.map((p, i) => {
+          const until = p.creditApprovedAmount ? (raw[i].approval_until as string | null) : null;
+          return { ...p, approvalUntil: until, approvalValid: !!until && p.status === PaymentStatus.PENDING && until >= today() };
+        }),
+      );
+    const ids = rows.flatMap((p) => [p.fileId, p.approvalFileId]).filter((x): x is string => !!x);
+    const files = ids.length ? await this.dataSource.getRepository(StoredFile).findBy(ids.map((id) => ({ id }))) : [];
     const byId = new Map(files.map((f) => [f.id, f]));
-    return rows.map((p) => ({ ...p, file: p.fileId ? (byId.get(p.fileId) ?? null) : null }));
+    return rows.map((p) => ({
+      ...p,
+      file: p.fileId ? (byId.get(p.fileId) ?? null) : null,
+      approvalFile: p.approvalFileId ? (byId.get(p.approvalFileId) ?? null) : null,
+    }));
   }
 
   @Post('payments')
@@ -141,6 +153,9 @@ export class ClientAccountController {
     const method = dto.method ?? PaymentMethod.TRANSFER;
     const deferred = method === PaymentMethod.CHEQUE || method === PaymentMethod.LC;
     if (deferred && !dto.dueDate) throw new BadRequestException('A cheque or LC needs its due date');
+    if (!deferred && dto.purpose === PaymentPurpose.GUARANTEE) {
+      throw new BadRequestException('Only a cheque or LC can be held as a guarantee');
+    }
     return this.dataSource.getRepository(Payment).save({
       clientId,
       orderId: dto.orderId ?? null,
@@ -152,6 +167,7 @@ export class ClientAccountController {
       collectedDate: deferred ? null : dto.date,
       dueDate: dto.dueDate ?? null,
       bank: dto.bank?.trim() || null,
+      purpose: deferred ? (dto.purpose ?? PaymentPurpose.PAYMENT) : PaymentPurpose.PAYMENT,
       reference: dto.reference?.trim() || null,
       fileId: dto.fileId ?? null,
       notes: dto.notes?.trim() || null,
@@ -174,15 +190,53 @@ export class ClientAccountController {
     if (payment.method !== PaymentMethod.CHEQUE && payment.method !== PaymentMethod.LC) {
       throw new BadRequestException('Only cheques and LCs change status');
     }
-    const notes = dto.status === PaymentStatus.BOUNCED && dto.reason
-      ? [payment.notes, `مرتجع: ${dto.reason}`].filter(Boolean).join('\n')
-      : payment.notes;
+    if (dto.status === PaymentStatus.RETURNED && payment.purpose !== PaymentPurpose.GUARANTEE) {
+      throw new BadRequestException('Only a guarantee is returned to the client');
+    }
+    const label = dto.status === PaymentStatus.BOUNCED ? 'مرتجع' : dto.status === PaymentStatus.RETURNED ? 'اترجع للعميل' : null;
+    const notes = label && dto.reason ? [payment.notes, `${label}: ${dto.reason}`].filter(Boolean).join('\n') : payment.notes;
     await repo.update(
       { id: paymentId },
       {
         status: dto.status,
         collectedDate: dto.status === PaymentStatus.RECEIVED ? (dto.collectedDate ?? today()) : null,
         notes,
+      },
+    );
+    return repo.findOneByOrFail({ id: paymentId });
+  }
+
+  /** Management approval to count a held cheque / LC towards the available credit. */
+  @Put('payments/:paymentId/approval')
+  async approval(
+    @CurrentUser() user: User,
+    @Param('clientId', ParseUUIDPipe) clientId: string,
+    @Param('paymentId', ParseUUIDPipe) paymentId: string,
+    @Body() dto: CreditApprovalDto,
+  ) {
+    await this.accounts.clientFor(user, clientId);
+    const repo = this.dataSource.getRepository(Payment);
+    const payment = await repo.findOneBy({ id: paymentId, clientId });
+    if (!payment || payment.removedAt) throw new NotFoundException('Payment not found');
+    if (payment.status !== PaymentStatus.PENDING) {
+      throw new BadRequestException('Only a cheque or LC still held can be approved');
+    }
+    if (dto.amount > payment.amount) throw new BadRequestException("The approved amount can't exceed the cheque");
+    if (dto.amount > 0 && !dto.approvedBy?.trim()) throw new BadRequestException('Who approved it?');
+    if (dto.fileId) {
+      const file = await this.dataSource.getRepository(StoredFile).findOneBy({ id: dto.fileId });
+      if (!file || (user.role !== Role.ADMIN && file.uploadedById !== user.id)) {
+        throw new BadRequestException('File not found');
+      }
+    }
+    const withdraw = dto.amount === 0;
+    await repo.update(
+      { id: paymentId },
+      {
+        creditApprovedAmount: withdraw ? null : dto.amount,
+        approvedBy: withdraw ? null : dto.approvedBy!.trim(),
+        approvedAt: withdraw ? null : (dto.approvedAt ?? today()),
+        approvalFileId: withdraw ? null : (dto.fileId ?? payment.approvalFileId),
       },
     );
     return repo.findOneByOrFail({ id: paymentId });
@@ -245,6 +299,13 @@ export class ClientAccountController {
       ws.addRow(['شيكات واعتمادات تحت التحصيل (مش محسوبة في الرصيد)']).font = { bold: true };
       for (const p of st.pending) {
         ws.addRow([p.date, METHOD_AR[p.method] ?? p.method, p.reference ?? '', `${p.bank ?? ''} · استحقاق ${p.dueDate ?? ''}`, null, p.amount, null]);
+      }
+    }
+    if (st.guarantees.length) {
+      ws.addRow([]);
+      ws.addRow(['شيكات واعتمادات ضمان محتفظ بيها (مش محسوبة في الرصيد)']).font = { bold: true };
+      for (const p of st.guarantees) {
+        ws.addRow([p.date, METHOD_AR[p.method] ?? p.method, p.reference ?? '', `${p.bank ?? ''} · تاريخ ${p.dueDate ?? ''}`, null, p.amount, null]);
       }
     }
     for (const col of [5, 6, 7]) ws.getColumn(col).numFmt = money;

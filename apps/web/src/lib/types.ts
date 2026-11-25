@@ -105,6 +105,8 @@ export interface ClientAccount {
   ordersTotal: number;
   paid: number;
   pending: number;
+  guarantees: number;
+  approvedCredit: number;
   balance: number;
   available: number;
   paymentTermsDays: number;
@@ -126,7 +128,14 @@ export interface Payment {
   amount: number;
   date: string;
   method: PaymentMethod;
-  status: "PENDING" | "RECEIVED" | "BOUNCED";
+  status: "PENDING" | "RECEIVED" | "BOUNCED" | "RETURNED";
+  purpose: "PAYMENT" | "GUARANTEE";
+  creditApprovedAmount: number | null;
+  approvedBy: string | null;
+  approvedAt: string | null;
+  approvalUntil: string | null;
+  approvalValid: boolean;
+  approvalFile: FileMeta | null;
   dueDate: string | null;
   bank: string | null;
   collectedDate: string | null;
@@ -176,6 +185,16 @@ export interface OrdersSummary {
   staleDays: number;
   staleCount: number;
   stale: OrderSummary[];
+  chequesToUpdate: {
+    id: string;
+    method: PaymentMethod;
+    purpose: "PAYMENT" | "GUARANTEE";
+    amount: number;
+    dueDate: string;
+    clientId: string;
+    clientName: string;
+    approved: boolean;
+  }[];
   byStatus: Partial<Record<OrderStatus, number>>;
 }
 
@@ -190,6 +209,16 @@ export interface StatementEntry {
   balance: number;
 }
 
+export interface StatementHeld {
+  id: string;
+  method: PaymentMethod;
+  amount: number;
+  date: string;
+  dueDate: string | null;
+  reference: string | null;
+  bank: string | null;
+}
+
 export interface Statement {
   client: { id: string; name: string; code: string | null };
   from: string | null;
@@ -199,7 +228,8 @@ export interface Statement {
   totalDebit: number;
   totalCredit: number;
   closing: number;
-  pending: { id: string; method: PaymentMethod; amount: number; date: string; dueDate: string | null; reference: string | null; bank: string | null }[];
+  pending: StatementHeld[];
+  guarantees: StatementHeld[];
 }
 
 export interface OrderLine {

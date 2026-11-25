@@ -351,4 +351,70 @@ describe('Orders (e2e)', () => {
     expect(summary).toMatchObject({ open: open.length, done: 0, cancelled: 1, staleDays: 3, staleCount: 0 });
     expect(summary.byStatus.NEW).toBeGreaterThan(0);
   });
+
+  describe('approved cheques raise the available credit while held', () => {
+    const base = () => `/clients/${cashClientId}`;
+    const future = (days: number) => new Date(Date.now() + days * 86_400_000).toISOString().slice(0, 10);
+
+    it('counts the approved amount until the cheque is collected, with no double counting', async () => {
+      const before = (await as(rep).get(`${base()}/account`)).body.available;
+      const cheque = (
+        await as(rep).post(`${base()}/payments`, { amount: 100000, date: future(0), method: 'CHEQUE', dueDate: future(20) }).expect(201)
+      ).body;
+      await as(rep).put(`${base()}/payments/${cheque.id}/approval`, { amount: 90000 }).expect(400); // who approved?
+      await as(rep).put(`${base()}/payments/${cheque.id}/approval`, { amount: 120000, approvedBy: 'GM' }).expect(400);
+      const proof = await upload(rep, 'approval.pdf');
+      await as(rep).put(`${base()}/payments/${cheque.id}/approval`, { amount: 90000, approvedBy: 'Sales manager', fileId: proof }).expect(200);
+
+      let account = (await as(rep).get(`${base()}/account`)).body;
+      expect(account).toMatchObject({ approvedCredit: 90000, available: before + 90000 });
+
+      const order = await as(rep)
+        .post('/orders', newOrder({ number: 'SO/26/000400', clientId: cashClientId, projectId: null, lines: [{ variantId: rebar12, qty: 25, unitPrice: 4000 }] }))
+        .expect(201); // 115,000 incl. VAT: fits only with the cheque
+      expect(order.body.events[0].data.usedApprovedCredit).toBe(90000);
+
+      const list = (await as(rep).get(`${base()}/payments`)).body;
+      expect(list.find((p: { id: string }) => p.id === cheque.id)).toMatchObject({ approvalValid: true, approvalUntil: future(23), approvalFile: { id: proof } });
+
+      await as(rep).put(`${base()}/payments/${cheque.id}/status`, { status: 'RECEIVED' }).expect(200);
+      account = (await as(rep).get(`${base()}/account`)).body;
+      expect(account.approvedCredit).toBe(0);
+      expect(account.available).toBe(Math.round((before + 100000 - 115000) * 100) / 100);
+    });
+
+    it('holds a guarantee cheque for six months, then returns it to the client', async () => {
+      const g = (
+        await as(rep)
+          .post(`${base()}/payments`, { amount: 200000, date: future(0), method: 'CHEQUE', purpose: 'GUARANTEE', dueDate: future(0) })
+          .expect(201)
+      ).body;
+      expect(g).toMatchObject({ purpose: 'GUARANTEE', status: 'PENDING' });
+      await as(rep).put(`${base()}/payments/${g.id}/approval`, { amount: 180000, approvedBy: 'GM' }).expect(200);
+      let account = (await as(rep).get(`${base()}/account`)).body;
+      expect(account).toMatchObject({ guarantees: 200000, approvedCredit: 180000 });
+      const statement = (await as(rep).get(`${base()}/statement`)).body;
+      expect(statement.guarantees.map((x: { id: string }) => x.id)).toEqual([g.id]);
+
+      await as(rep).put(`${base()}/payments/${g.id}/status`, { status: 'RETURNED', reason: 'Paid by transfer' }).expect(200);
+      account = (await as(rep).get(`${base()}/account`)).body;
+      expect(account).toMatchObject({ guarantees: 0, approvedCredit: 0 });
+
+      await as(rep).post(`${base()}/payments`, { amount: 10, date: future(0), method: 'TRANSFER', purpose: 'GUARANTEE' }).expect(400);
+      const transfer = (await as(rep).post(`${base()}/payments`, { amount: 10, date: future(0) }).expect(201)).body;
+      await as(rep).put(`${base()}/payments/${transfer.id}/status`, { status: 'RETURNED' }).expect(400);
+    });
+
+    it('stops counting an approval past its date and lists the cheque for an update', async () => {
+      const old = (
+        await as(rep).post(`${base()}/payments`, { amount: 50000, date: future(-30), method: 'CHEQUE', dueDate: future(-10) }).expect(201)
+      ).body;
+      await as(rep).put(`${base()}/payments/${old.id}/approval`, { amount: 45000, approvedBy: 'GM' }).expect(200);
+      const account = (await as(rep).get(`${base()}/account`)).body;
+      expect(account.approvedCredit).toBe(0);
+      const summary = (await as(rep).get('/orders/summary')).body;
+      expect(summary.chequesToUpdate).toEqual([expect.objectContaining({ id: old.id, clientName: 'Cash Co', approved: true })]);
+      expect((await as(otherRep).get('/orders/summary')).body.chequesToUpdate).toEqual([]);
+    });
+  });
 });

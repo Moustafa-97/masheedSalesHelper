@@ -15,7 +15,7 @@ import {
   MinLength,
   ValidateNested,
 } from 'class-validator';
-import { DocumentType, OrderStatus, PaymentMethod, PaymentStatus } from './order.entities.js';
+import { DocumentType, OrderStatus, PaymentMethod, PaymentPurpose, PaymentStatus } from './order.entities.js';
 
 const price = { maxDecimalPlaces: 2 } as const;
 const qty = { maxDecimalPlaces: 3 } as const;
@@ -82,6 +82,14 @@ export class PaymentStatusDto {
   /** When it was collected (RECEIVED); defaults to today. */
   @IsOptional() @IsDateString({ strict: true }) collectedDate?: string;
   @IsOptional() @IsString() @MaxLength(500) reason?: string;
+}
+
+export class CreditApprovalDto {
+  /** Approved amount (usually 90% of the cheque); 0 withdraws the approval. */
+  @IsNumber(price) @Min(0) amount: number;
+  @IsOptional() @IsString() @MaxLength(120) approvedBy?: string | null;
+  @IsOptional() @IsDateString({ strict: true }) approvedAt?: string;
+  @IsOptional() @IsUUID() fileId?: string | null;
 }
 
 export class StatementQuery {
@@ -152,6 +160,8 @@ export class AddPaymentDto {
   /** Cheque date or LC maturity date (required for both). */
   @IsOptional() @IsDateString({ strict: true }) dueDate?: string | null;
   @IsOptional() @IsString() @MaxLength(80) bank?: string | null;
+  /** Cheques and LCs only: for collection (default) or held as a guarantee. */
+  @IsOptional() @IsEnum(PaymentPurpose) purpose?: PaymentPurpose;
   @IsOptional() @IsString() @MaxLength(80) reference?: string | null;
   @IsOptional() @IsUUID() fileId?: string | null;
   @IsOptional() @IsUUID() orderId?: string | null;

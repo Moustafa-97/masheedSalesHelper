@@ -83,6 +83,28 @@ export default function HomePage() {
         </Card>
       )}
 
+      {summary && summary.chequesToUpdate.length > 0 && (
+        <Card className="flex flex-col gap-2 bg-warn-bg">
+          <h2 className="font-bold">{t("chequesToUpdate")}</h2>
+          <p className="text-xs text-muted">{t("chequesToUpdateHint")}</p>
+          <ul className="divide-y divide-line">
+            {summary.chequesToUpdate.map((c) => (
+              <li key={c.id}>
+                <Link href={`/clients/${c.clientId}`} className="flex flex-wrap items-center justify-between gap-2 py-2">
+                  <span className="text-sm">
+                    <bdi className="font-semibold">{formatNumber(c.amount)}</bdi> · {t(`method.${c.method}`)} ({t(`purpose.${c.purpose}`)}) ·{" "}
+                    {c.clientName}
+                  </span>
+                  <span className="text-xs font-semibold text-warn">
+                    <bdi>{c.dueDate}</bdi>
+                  </span>
+                </Link>
+              </li>
+            ))}
+          </ul>
+        </Card>
+      )}
+
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         {tiles.map((tile) => (
           <Link key={tile.label} href={tile.href}>

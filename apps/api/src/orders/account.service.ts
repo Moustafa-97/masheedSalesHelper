@@ -10,16 +10,32 @@ export interface ClientAccount {
   /** All orders that aren't cancelled, incl. VAT, removed lines excluded. */
   ordersTotal: number;
   paid: number;
-  /** Cheques and LCs not yet collected: shown, not counted. */
+  /** Cheques and LCs for collection, not collected yet: shown, not counted. */
   pending: number;
+  /** Cheques and LCs held as guarantees. */
+  guarantees: number;
+  /** Management-approved temporary credit on held cheques / LCs, still valid today. */
+  approvedCredit: number;
   /** What the client owes: opening balance + orders − payments. */
   balance: number;
-  /** creditLimit − balance: how much more can be ordered. */
+  /** creditLimit − balance + approvedCredit: how much more can be ordered. */
   available: number;
   paymentTermsDays: number;
 }
 
 const round2 = (n: number) => Math.round(n * 100) / 100;
+
+/** Days after a collection cheque's date during which its approval still counts (time to clear). */
+export const APPROVAL_GRACE_DAYS = 3;
+/** A guarantee cheque / LC is held for six months from its date. */
+export const GUARANTEE_MONTHS = 6;
+
+/** Last day an approval counts, as SQL on the payments table. */
+export const APPROVAL_UNTIL_SQL = `(CASE WHEN purpose = 'GUARANTEE'
+    THEN "dueDate" + INTERVAL '${GUARANTEE_MONTHS} months'
+    ELSE "dueDate" + INTERVAL '${APPROVAL_GRACE_DAYS} days' END)::date`;
+
+export const APPROVAL_VALID_SQL = `status = 'PENDING' AND "creditApprovedAmount" > 0 AND CURRENT_DATE <= ${APPROVAL_UNTIL_SQL}`;
 
 /** Totals of one order: subtotal and VAT are rounded to halalas separately, as on an invoice. */
 export function orderTotals(lines: { qty: number; unitPrice: number; removedAt: Date | null }[], vatRate: number) {
@@ -67,7 +83,9 @@ export class AccountService {
     );
     const [payments] = await m.query(
       `SELECT COALESCE(SUM(amount) FILTER (WHERE status = 'RECEIVED'), 0)::float AS paid,
-              COALESCE(SUM(amount) FILTER (WHERE status = 'PENDING'), 0)::float AS pending
+              COALESCE(SUM(amount) FILTER (WHERE status = 'PENDING' AND purpose = 'PAYMENT'), 0)::float AS pending,
+              COALESCE(SUM(amount) FILTER (WHERE status = 'PENDING' AND purpose = 'GUARANTEE'), 0)::float AS guarantees,
+              COALESCE(SUM("creditApprovedAmount") FILTER (WHERE ${APPROVAL_VALID_SQL}), 0)::float AS approved
          FROM payments WHERE "clientId" = $1 AND "removedAt" IS NULL`,
       [client.id],
     );
@@ -80,8 +98,10 @@ export class AccountService {
       ordersTotal,
       paid,
       pending: round2(payments.pending),
+      guarantees: round2(payments.guarantees),
+      approvedCredit: round2(payments.approved),
       balance,
-      available: round2(client.creditLimit - balance),
+      available: round2(client.creditLimit - balance + payments.approved),
       paymentTermsDays: client.paymentTermsDays,
     };
   }
@@ -98,6 +118,16 @@ export interface StatementEntry {
   balance: number;
 }
 
+export interface StatementHeld {
+  id: string;
+  method: string;
+  amount: number;
+  date: string;
+  dueDate: string | null;
+  reference: string | null;
+  bank: string | null;
+}
+
 export interface Statement {
   client: { id: string; name: string; code: string | null };
   from: string | null;
@@ -109,7 +139,9 @@ export interface Statement {
   totalCredit: number;
   closing: number;
   /** Cheques and LCs received but not collected yet (not in the balance). */
-  pending: { id: string; method: string; amount: number; date: string; dueDate: string | null; reference: string | null; bank: string | null }[];
+  pending: StatementHeld[];
+  /** Cheques and LCs held as guarantees. */
+  guarantees: StatementHeld[];
 }
 
 /**
@@ -142,11 +174,12 @@ export async function buildStatement(
     dueDate: string | null;
     reference: string | null;
     bank: string | null;
+    purpose: string;
   }[] = await m.query(
-    `SELECT id, method, status, amount::float AS amount, to_char(date, 'YYYY-MM-DD') AS date,
+    `SELECT id, method, status, purpose, amount::float AS amount, to_char(date, 'YYYY-MM-DD') AS date,
             to_char("collectedDate", 'YYYY-MM-DD') AS collected, to_char("dueDate", 'YYYY-MM-DD') AS "dueDate",
             reference, bank
-       FROM payments WHERE "clientId" = $1 AND "removedAt" IS NULL AND status <> 'BOUNCED'`,
+       FROM payments WHERE "clientId" = $1 AND "removedAt" IS NULL AND status IN ('PENDING', 'RECEIVED')`,
     [client.id],
   );
 
@@ -195,8 +228,17 @@ export async function buildStatement(
     totalDebit,
     totalCredit,
     closing: round2(opening + totalDebit - totalCredit),
-    pending: payments
-      .filter((p) => p.status === 'PENDING')
-      .map(({ id, method, amount, date, dueDate, reference, bank }) => ({ id, method, amount, date, dueDate, reference, bank })),
+    pending: payments.filter((p) => p.status === 'PENDING' && p.purpose === 'PAYMENT').map(held),
+    guarantees: payments.filter((p) => p.status === 'PENDING' && p.purpose === 'GUARANTEE').map(held),
   };
 }
+
+const held = ({ id, method, amount, date, dueDate, reference, bank }: StatementHeld & Record<string, unknown>): StatementHeld => ({
+  id,
+  method,
+  amount,
+  date,
+  dueDate,
+  reference,
+  bank,
+});

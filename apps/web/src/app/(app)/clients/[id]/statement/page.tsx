@@ -112,21 +112,26 @@ export default function StatementPage() {
             </table>
           </Card>
 
-          {st.pending.length > 0 && (
-            <Card className="flex flex-col gap-2">
-              <h2 className="font-bold">{t("pendingNotCounted")}</h2>
-              <ul className="flex flex-col gap-1 text-sm">
-                {st.pending.map((p) => (
-                  <li key={p.id}>
-                    <bdi className="font-semibold">{formatMoney(p.amount)}</bdi> · {t(`method.${p.method}`)}
-                    {p.bank && ` · ${p.bank}`}
-                    {p.reference && <> · <bdi>{p.reference}</bdi></>}
-                    {p.dueDate && <> · {t("chequeDueDate")} <bdi>{p.dueDate}</bdi></>}
-                  </li>
-                ))}
-              </ul>
-            </Card>
-          )}
+          {[
+            { list: st.pending, title: t("pendingNotCounted"), dateLabel: t("chequeDueDate") },
+            { list: st.guarantees, title: t("guaranteesNotCounted"), dateLabel: t("chequeDate") },
+          ]
+            .filter((g) => g.list.length > 0)
+            .map((g) => (
+              <Card key={g.title} className="flex flex-col gap-2">
+                <h2 className="font-bold">{g.title}</h2>
+                <ul className="flex flex-col gap-1 text-sm">
+                  {g.list.map((p) => (
+                    <li key={p.id}>
+                      <bdi className="font-semibold">{formatMoney(p.amount)}</bdi> · {t(`method.${p.method}`)}
+                      {p.bank && ` · ${p.bank}`}
+                      {p.reference && <> · <bdi>{p.reference}</bdi></>}
+                      {p.dueDate && <> · {g.dateLabel} <bdi>{p.dueDate}</bdi></>}
+                    </li>
+                  ))}
+                </ul>
+              </Card>
+            ))}
         </>
       )}
     </div>

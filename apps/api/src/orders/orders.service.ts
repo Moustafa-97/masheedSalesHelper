@@ -11,7 +11,7 @@ import { Client, ClientStatus } from '../clients/client.entity.js';
 import { ProductVariant } from '../products/product.entities.js';
 import { Role, User } from '../users/user.entity.js';
 import { isUniqueViolation } from '../users/users.module.js';
-import { AccountService, addDays, orderTotals } from './account.service.js';
+import { AccountService, addDays, APPROVAL_UNTIL_SQL, orderTotals } from './account.service.js';
 import {
   ClientProject,
   Delivery,
@@ -126,6 +126,30 @@ export class OrdersService {
     const stale = open
       .filter((o) => new Date(o.lastActivityAt).getTime() < cutoff)
       .sort((a, b) => new Date(a.lastActivityAt).getTime() - new Date(b.lastActivityAt).getTime());
+    const qb = this.dataSource
+      .createQueryBuilder()
+      .select(['p.id AS id', 'p.method AS method', 'p.purpose AS purpose', 'p.amount::float AS amount'])
+      .addSelect(`to_char(p."dueDate", 'YYYY-MM-DD')`, 'dueDate')
+      .addSelect('c.id', 'clientId')
+      .addSelect('c.name', 'clientName')
+      .addSelect('p."creditApprovedAmount" IS NOT NULL', 'approved')
+      .from('payments', 'p')
+      .innerJoin('clients', 'c', 'c.id = p."clientId"')
+      .where(`p.status = 'PENDING' AND p."removedAt" IS NULL`)
+      // Collection cheques past their date; guarantees past their six months.
+      .andWhere(`CURRENT_DATE > (CASE WHEN p.purpose = 'GUARANTEE' THEN ${APPROVAL_UNTIL_SQL.replaceAll('"dueDate"', 'p."dueDate"').replaceAll('purpose', 'p.purpose')} ELSE p."dueDate" END)`)
+      .orderBy('p."dueDate"', 'ASC');
+    if (user.role === Role.REP) qb.andWhere('c."repId" = :repId', { repId: user.id });
+    const chequesToUpdate: {
+      id: string;
+      method: string;
+      purpose: string;
+      amount: number;
+      dueDate: string;
+      clientId: string;
+      clientName: string;
+      approved: boolean;
+    }[] = await qb.getRawMany();
     return {
       open: open.length,
       done,
@@ -133,6 +157,7 @@ export class OrdersService {
       staleDays,
       stale: stale.slice(0, 10),
       staleCount: stale.length,
+      chequesToUpdate,
       byStatus: open.reduce<Record<string, number>>((acc, o) => ((acc[o.status] = (acc[o.status] ?? 0) + 1), acc), {}),
     };
   }
@@ -227,11 +252,16 @@ export class OrdersService {
           notes: dto.notes ?? null,
         }),
       );
-      await this.creditCheck(m, client, orderTotals(lines, order.vatRate).total);
+      const total = orderTotals(lines, order.vatRate).total;
+      const account = await this.creditCheck(m, client, total);
       await m.save(lines.map((l, i) => m.create(OrderLine, { ...l, orderId: order.id, position: i })));
       await this.event(m, order.id, user, 'CREATED', {
         number: order.number,
-        total: orderTotals(lines, order.vatRate).total,
+        total,
+        // The order only fits thanks to approved cheques / LCs: kept on record.
+        ...(account && account.approvedCredit > 0 && total > account.available - account.approvedCredit + 0.005
+          ? { usedApprovedCredit: account.approvedCredit }
+          : {}),
       });
       return order.id;
     });
@@ -617,7 +647,7 @@ export class OrdersService {
   }
 
   private async creditCheck(m: EntityManager, client: Client, extra: number) {
-    if (extra <= 0) return;
+    if (extra <= 0) return null;
     const account = await this.accounts.account(client, m);
     if (extra > account.available + 0.005) {
       throw new UnprocessableEntityException({
@@ -630,6 +660,7 @@ export class OrdersService {
         available: account.available,
       });
     }
+    return account;
   }
 
   private async deliveredByLine(m: EntityManager, lineIds: string[]) {

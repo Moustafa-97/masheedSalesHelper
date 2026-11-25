@@ -33,10 +33,12 @@ function AccountCard({ clientId }: { clientId: string }) {
           <span className={a.available < 0 ? "text-danger" : undefined}>{formatMoney(a.available)}</span>
         </Stat>
       </dl>
-      {a.pending > 0 && (
-        <p className="text-sm text-muted">
-          {t("pendingCollection")}: <bdi className="font-semibold text-ink">{formatMoney(a.pending)}</bdi>
-        </p>
+      {(a.pending > 0 || a.guarantees > 0 || a.approvedCredit > 0) && (
+        <div className="flex flex-wrap gap-x-4 gap-y-1 text-sm text-muted">
+          {a.pending > 0 && <span>{t("pendingCollection")}: <bdi className="font-semibold text-ink">{formatMoney(a.pending)}</bdi></span>}
+          {a.guarantees > 0 && <span>{t("guaranteesHeld")}: <bdi className="font-semibold text-ink">{formatMoney(a.guarantees)}</bdi></span>}
+          {a.approvedCredit > 0 && <span>{t("approvedCredit")}: <bdi className="font-semibold text-ok">+{formatMoney(a.approvedCredit)}</bdi></span>}
+        </div>
       )}
       {a.creditLimit > 0 && (
         <div className="h-2.5 overflow-hidden rounded-full bg-canvas" aria-label={`${used}%`}>
@@ -93,43 +95,112 @@ function Projects({ clientId }: { clientId: string }) {
 
 const METHODS = ["TRANSFER", "CASH", "CHEQUE", "LC"] as const;
 
+/** Keeps numbers and dates in their own direction inside Arabic text. */
+const isolate = (s: string) => `\u2068${s}\u2069`;
+
+function ApprovalForm({ clientId, p, refresh, onDone }: { clientId: string; p: Payment; refresh: () => void; onDone: () => void }) {
+  const { t } = useI18n();
+  const [amount, setAmount] = useState(String(p.creditApprovedAmount ?? Math.round(p.amount * 0.9 * 100) / 100));
+  const [approvedBy, setApprovedBy] = useState(p.approvedBy ?? "");
+  const [file, setFile] = useState<File | null>(null);
+  const save = useMutation({
+    mutationFn: async () => {
+      const fileId = file ? (await uploadFile(file)).id : undefined;
+      return api(`/clients/${clientId}/payments/${p.id}/approval`, {
+        method: "PUT",
+        body: { amount: Number(amount), approvedBy, fileId },
+      });
+    },
+    onSuccess: () => (refresh(), onDone()),
+  });
+  return (
+    <div role="group" className="grid grid-cols-2 gap-2 rounded-xl bg-canvas p-3">
+      <Input label={t("approvedAmount")} hint="90%" value={amount} onChange={(e) => setAmount(e.target.value)} type="number" step="any" min={0} max={p.amount} dir="ltr" />
+      <Input label={t("approvedBy")} value={approvedBy} onChange={(e) => setApprovedBy(e.target.value)} />
+      <label className="col-span-2 flex flex-col gap-1 text-xs text-muted">
+        {t("approvalProof")}
+        <input type="file" accept="application/pdf,image/*" onChange={(e) => setFile(e.target.files?.[0] ?? null)} className="text-sm text-ink" />
+      </label>
+      {save.error && <div className="col-span-2"><Notice>{save.error.message}</Notice></div>}
+      <div className="col-span-2 flex gap-2">
+        <Button type="button" onClick={() => save.mutate()} disabled={save.isPending || !approvedBy.trim()}>{t("save")}</Button>
+        <Button type="button" variant="secondary" onClick={onDone}>{t("cancel")}</Button>
+      </div>
+    </div>
+  );
+}
+
 function PaymentRow({ clientId, p, refresh }: { clientId: string; p: Payment; refresh: () => void }) {
   const { t } = useI18n();
   const [error, setError] = useState<string | null>(null);
-  const setStatus = (status: "RECEIVED" | "BOUNCED", reason?: string) =>
+  const [approving, setApproving] = useState(false);
+  const guarantee = p.purpose === "GUARANTEE";
+  const setStatus = (status: "RECEIVED" | "BOUNCED" | "RETURNED", reason?: string) =>
     api(`/clients/${clientId}/payments/${p.id}/status`, { method: "PUT", body: { status, reason, collectedDate: today() } })
       .then(refresh)
       .catch((e: Error) => setError(e.message));
-  const off = Boolean(p.removedAt) || p.status === "BOUNCED";
+  const off = Boolean(p.removedAt) || p.status === "BOUNCED" || p.status === "RETURNED";
+  const withdraw = () =>
+    api(`/clients/${clientId}/payments/${p.id}/approval`, { method: "PUT", body: { amount: 0 } })
+      .then(refresh)
+      .catch((e: Error) => setError(e.message));
   return (
     <li className={clsx("flex flex-col gap-2 rounded-xl border border-line p-3 text-sm", off && "opacity-60")}>
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className={clsx(off && "line-through")}>
-          <bdi className="font-bold">{formatMoney(p.amount)}</bdi> · {t(`method.${p.method}`)} · <bdi>{p.date}</bdi>
+          <bdi className="font-bold">{formatMoney(p.amount)}</bdi> · {t(`method.${p.method}`)}
+          {guarantee && <> ({t("purpose.GUARANTEE")})</>} · <bdi>{p.date}</bdi>
           {p.bank && <> · {p.bank}</>}
           {p.reference && <> · <bdi>{p.reference}</bdi></>}
           {p.file && <> · <a href={fileUrl(p.file.id)} target="_blank" rel="noreferrer" className="text-brand-700 underline">{t("receipt")}</a></>}
         </div>
         <Badge tone={p.status === "RECEIVED" ? "ok" : p.status === "PENDING" ? "warn" : "danger"}>
-          {t(`payStatus.${p.status}`)}
+          {guarantee && p.status === "PENDING" ? t("held") : t(`payStatus.${p.status}`)}
         </Badge>
       </div>
       {(p.dueDate || p.collectedDate) && (
         <div className="text-xs text-muted">
-          {p.dueDate && <>{t("chequeDueDate")}: <bdi>{p.dueDate}</bdi></>}
+          {p.dueDate && <>{guarantee ? t("chequeDate") : t("chequeDueDate")}: <bdi>{p.dueDate}</bdi></>}
           {p.dueDate && p.collectedDate && " · "}
           {p.collectedDate && p.method !== "TRANSFER" && p.method !== "CASH" && t("collectedOn", { date: p.collectedDate })}
         </div>
       )}
+      {p.creditApprovedAmount !== null && p.approvalUntil && (
+        <div className="flex flex-wrap items-center gap-2 text-xs">
+          <Badge tone={p.approvalValid ? "ok" : "neutral"}>
+            {p.approvalValid
+              ? t("approvalBadge", { amount: isolate(formatMoney(p.creditApprovedAmount)), date: isolate(p.approvalUntil) })
+              : t("approvalExpired", { date: isolate(p.approvalUntil) })}
+          </Badge>
+          <span className="text-muted">
+            {t("approvedBy")}: {p.approvedBy} · <bdi>{p.approvedAt}</bdi>
+          </span>
+          {p.approvalFile && (
+            <a href={fileUrl(p.approvalFile.id)} target="_blank" rel="noreferrer" className="text-brand-700 underline">{t("approvalProof")}</a>
+          )}
+        </div>
+      )}
       {p.notes && <p className="whitespace-pre-line text-xs text-muted">{p.notes}</p>}
+      {approving && <ApprovalForm clientId={clientId} p={p} refresh={refresh} onDone={() => setApproving(false)} />}
       {p.removedAt ? (
         <Badge tone="danger">{t("removed")}: {p.removedReason}</Badge>
       ) : (
         <div className="flex flex-wrap gap-2">
           {p.status === "PENDING" && (
             <>
-              <Button variant="secondary" className="min-h-9" onClick={() => setStatus("RECEIVED")}>✓ {t("markCollected")}</Button>
+              <Button variant="secondary" className="min-h-9" onClick={() => setStatus("RECEIVED")}>
+                ✓ {guarantee ? t("markCashed") : t("markCollected")}
+              </Button>
+              {guarantee && <ReasonAction label={t("markReturned")} variant="secondary" onConfirm={(reason) => setStatus("RETURNED", reason)} />}
               <ReasonAction label={t("markBounced")} onConfirm={(reason) => setStatus("BOUNCED", reason)} />
+              {!approving && (
+                <Button variant="ghost" className="min-h-9" onClick={() => setApproving(true)}>
+                  {p.creditApprovedAmount !== null ? t("editApproval") : t("creditApproval")}
+                </Button>
+              )}
+              {p.creditApprovedAmount !== null && (
+                <Button variant="ghost" className="min-h-9" onClick={withdraw}>{t("withdrawApproval")}</Button>
+              )}
             </>
           )}
           <ReasonAction
@@ -151,6 +222,7 @@ function Payments({ clientId }: { clientId: string }) {
   const [date, setDate] = useState(today());
   const [method, setMethod] = useState<PaymentMethod>("TRANSFER");
   const [dueDate, setDueDate] = useState("");
+  const [purpose, setPurpose] = useState<"PAYMENT" | "GUARANTEE">("PAYMENT");
   const [bank, setBank] = useState("");
   const [reference, setReference] = useState("");
   const [file, setFile] = useState<File | null>(null);
@@ -173,6 +245,7 @@ function Payments({ clientId }: { clientId: string }) {
           fileId,
           dueDate: deferred ? dueDate : null,
           bank: bank || null,
+          purpose: deferred ? purpose : "PAYMENT",
         },
       });
     },
@@ -203,14 +276,28 @@ function Payments({ clientId }: { clientId: string }) {
           </Select>
           <Input label={t("amount")} value={amount} onChange={(e) => setAmount(e.target.value)} type="number" step="any" min={0.01} required dir="ltr" />
           <Input label={deferred ? t("receivedDate") : t("transferDate")} type="date" value={date} onChange={(e) => setDate(e.target.value)} required />
-          {deferred && <Input label={t("chequeDueDate")} type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} required />}
+          {deferred && (
+            <Select label={t("purpose")} value={purpose} onChange={(e) => setPurpose(e.target.value as "PAYMENT" | "GUARANTEE")}>
+              <option value="PAYMENT">{t("purpose.PAYMENT")}</option>
+              <option value="GUARANTEE">{t("purpose.GUARANTEE")}</option>
+            </Select>
+          )}
+          {deferred && (
+            <Input
+              label={purpose === "GUARANTEE" && method === "CHEQUE" ? t("chequeDate") : t("chequeDueDate")}
+              type="date"
+              value={dueDate}
+              onChange={(e) => setDueDate(e.target.value)}
+              required
+            />
+          )}
           <Input label={t("bank")} hint={t("optional")} value={bank} onChange={(e) => setBank(e.target.value)} />
           <Input label={t("reference")} hint={t("optional")} value={reference} onChange={(e) => setReference(e.target.value)} dir="ltr" />
           <label className="col-span-2 flex flex-col gap-1 text-xs text-muted">
             {t("receipt")}
             <input type="file" accept="application/pdf,image/*" onChange={(e) => setFile(e.target.files?.[0] ?? null)} className="text-sm text-ink" />
           </label>
-          {deferred && <p className="col-span-2 text-xs text-muted">{t("pendingNotCounted")}</p>}
+          {deferred && <p className="col-span-2 text-xs text-muted">{purpose === "GUARANTEE" ? t("guaranteeHint") : t("pendingNotCounted")}</p>}
           {add.error && <div className="col-span-2"><Notice>{add.error.message}</Notice></div>}
           <div className="col-span-2"><Button type="submit" disabled={add.isPending}>{t("save")}</Button></div>
         </form>
