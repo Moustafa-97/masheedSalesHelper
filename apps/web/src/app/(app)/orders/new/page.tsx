@@ -3,6 +3,7 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useState, type FormEvent } from "react";
+import { MarketHint } from "@/components/market-bits";
 import { ItemPicker, ProjectForm, Stat } from "@/components/order-bits";
 import { Button, Card, Input, Notice, PageHeader, Select, Textarea } from "@/components/ui";
 import { api, ApiError } from "@/lib/api";
@@ -36,6 +37,8 @@ function NewOrderForm() {
   const { data: variants = [] } = useVariants();
 
   const [clientId, setClientId] = useState(params.get("clientId") ?? "");
+  /** Orders follow the client's payment terms: the market hint compares at the same terms. */
+  const clientTerms = clients.find((c) => c.id === clientId)?.paymentTermsDays ?? 0;
   const [projectId, setProjectId] = useState("");
   const [addingProject, setAddingProject] = useState(false);
   const [number, setNumber] = useState("");
@@ -220,6 +223,7 @@ function NewOrderForm() {
                       })}
                     </p>
                   )}
+                  <MarketHint variantIds={[l.variant.id]} creditDays={clientTerms} />
                   {belowMin(l) && (
                     <div className="flex flex-col gap-1">
                       <Notice tone="warn">{t("belowMin", { min: `${formatQty(l.variant.minQty)} ${unit}` })}</Notice>

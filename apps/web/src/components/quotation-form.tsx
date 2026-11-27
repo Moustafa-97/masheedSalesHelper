@@ -7,9 +7,10 @@ import { api } from "@/lib/api";
 import { useAcceptedPrices, useClients, useProjects, useVariants } from "@/lib/hooks";
 import { useI18n } from "@/lib/i18n";
 import { formatMoney, today } from "@/lib/orders";
-import { defaultPdfName, defaultTerms } from "@/lib/quotation";
+import { defaultPdfName, defaultTerms, withPayment } from "@/lib/quotation";
 import type { Client, Quotation, Unit } from "@/lib/types";
 import { isolate } from "./credit-panel";
+import { MarketHint, TermsSelect, useTerms } from "./market-bits";
 import { ItemPicker, Stat } from "./order-bits";
 import { Button, Card, Input, Notice, Select, Textarea } from "./ui";
 
@@ -35,19 +36,23 @@ function LineEditor({
   update,
   remove,
   clientId,
+  creditDays,
 }: {
   line: Line;
   update: (patch: Partial<Line>) => void;
   remove: () => void;
   clientId: string;
+  creditDays: number;
 }) {
   const { t } = useI18n();
+  const terms = useTerms();
   const { data: variants = [] } = useVariants();
   const { data: accepted = [] } = useAcceptedPrices(clientId || undefined);
   const [linking, setLinking] = useState(line.variantIds.length === 0);
   const [pick, setPick] = useState("");
   const byId = new Map(variants.map((v) => [v.id, v]));
   const lastPrice = line.variantIds.map((id) => accepted.find((a) => a.variantId === id)).find(Boolean);
+  const otherTerms = lastPrice && lastPrice.creditDays !== creditDays;
 
   const link = () => {
     const v = byId.get(pick);
@@ -78,6 +83,8 @@ function LineEditor({
       {lastPrice && (
         <p className="text-xs text-ok">
           {t("acceptedPriceHint", { price: isolate(formatMoney(lastPrice.unitPrice)), number: isolate(lastPrice.number) })}
+          {` (${terms(lastPrice.creditDays)})`}
+          {otherTerms && <span className="text-warn"> · {t("differentTerms")}</span>}
           {String(lastPrice.unitPrice) !== line.unitPrice && (
             <button type="button" className="ms-2 underline" onClick={() => update({ unitPrice: String(lastPrice.unitPrice) })}>
               {t("useIt")}
@@ -85,6 +92,7 @@ function LineEditor({
           )}
         </p>
       )}
+      <MarketHint variantIds={line.variantIds} creditDays={creditDays} />
       <div className="flex flex-wrap items-center gap-1 text-xs">
         <span className="text-muted">{t("linkedItems")}:</span>
         {line.variantIds.map((id) => {
@@ -161,6 +169,12 @@ export function QuotationForm({ initial, presetClientId }: { initial?: Quotation
   const [reference, setReference] = useState(initial?.reference ?? "");
   const [terms, setTerms] = useState(initial?.terms ?? "");
   const [termsTouched, setTermsTouched] = useState(!!initial);
+  const [creditDays, setCreditDays] = useState(initial?.creditDays ?? 0);
+  /** Payment terms change the price, so they're chosen on their own and written into the terms. */
+  const chooseTerms = (days: number) => {
+    setCreditDays(days);
+    setTerms((old) => (termsTouched && old ? withPayment(old, days) : defaultTerms({ creditDays: days })));
+  };
   const [pdfName, setPdfName] = useState(initial?.pdfName ?? "");
   const [notes, setNotes] = useState(initial?.notes ?? "");
   const [allPrice, setAllPrice] = useState("");
@@ -176,7 +190,9 @@ export function QuotationForm({ initial, presetClientId }: { initial?: Quotation
     if (!attn) setAttn(c.purchasingName ?? "");
     if (!phone) setPhone(c.purchasingPhone ?? "");
     if (!email) setEmail(c.purchasingEmail ?? "");
-    if (!termsTouched) setTerms(defaultTerms({ credit: c.creditLimit > 0 }));
+    const days = c.creditLimit > 0 ? c.paymentTermsDays : 0;
+    setCreditDays(days);
+    setTerms((old) => (termsTouched && old ? withPayment(old, days) : defaultTerms({ creditDays: days })));
   };
 
   const subtotal = round2(lines.reduce((s, l) => s + (num(l.qty) || 0) * (num(l.unitPrice) || 0), 0));
@@ -188,11 +204,12 @@ export function QuotationForm({ initial, presetClientId }: { initial?: Quotation
         ...(initial ? {} : { clientId }),
         projectId: projectId || null,
         date,
+        creditDays,
         attn: attn || null,
         phone: phone || null,
         email: email || null,
         reference: reference || null,
-        terms: terms || defaultTerms({ credit: true }),
+        terms: terms || defaultTerms({ creditDays }),
         pdfName: pdfName || null,
         notes: notes || null,
         lines: lines.map((l) => ({ name: l.name, variantIds: l.variantIds, unit: l.unit, qty: num(l.qty), unitPrice: num(l.unitPrice) })),
@@ -251,6 +268,7 @@ export function QuotationForm({ initial, presetClientId }: { initial?: Quotation
           </div>
         )}
         <Input label={t("date")} type="date" value={date} onChange={(e) => setDate(e.target.value)} required />
+        <TermsSelect label={t("paymentTerms")} value={creditDays} onChange={chooseTerms} />
         <Input label={t("clientRef")} hint={t("optional")} value={reference} onChange={(e) => setReference(e.target.value)} dir="ltr" />
         <Input label={t("attn")} value={attn} onChange={(e) => setAttn(e.target.value)} />
         <div className="grid grid-cols-2 gap-2">
@@ -267,6 +285,7 @@ export function QuotationForm({ initial, presetClientId }: { initial?: Quotation
               key={l.key}
               line={l}
               clientId={clientId}
+              creditDays={creditDays}
               update={(patch) => update(l.key, patch)}
               remove={() => setLines((ls) => (ls.length > 1 ? ls.filter((x) => x.key !== l.key) : ls))}
             />
@@ -295,7 +314,7 @@ export function QuotationForm({ initial, presetClientId }: { initial?: Quotation
           onChange={(e) => (setTerms(e.target.value), setTermsTouched(true))}
           rows={6}
           dir="ltr"
-          placeholder={defaultTerms({ credit: true })}
+          placeholder={defaultTerms({ creditDays })}
         />
         <Input label={t("pdfName")} value={pdfName} onChange={(e) => setPdfName(e.target.value)} placeholder={defaultPdfName(date)} dir="ltr" />
         <Textarea label={`${t("notes")} (${t("internalOnly")})`} value={notes} onChange={(e) => setNotes(e.target.value)} rows={2} />

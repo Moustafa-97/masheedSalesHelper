@@ -8,7 +8,7 @@ import { api } from "@/lib/api";
 import { useMe } from "@/lib/hooks";
 import { useI18n, type MessageKey } from "@/lib/i18n";
 import type { Role } from "@/lib/types";
-import { BoxIcon, HomeIcon, LogoutIcon, OrdersIcon, PersonIcon, QuoteIcon, ShieldIcon, UsersIcon } from "./icons";
+import { BoxIcon, HomeIcon, LogoutIcon, MarketIcon, OrdersIcon, PersonIcon, QuoteIcon, ShieldIcon, UsersIcon } from "./icons";
 import { Muted } from "./ui";
 
 type NavItem = {
@@ -25,9 +25,11 @@ const NAV: NavItem[] = [
   { href: "/orders", label: "orders", icon: OrdersIcon, roles: ["ADMIN", "REP"] },
   { href: "/quotations", label: "quotations", icon: QuoteIcon, roles: ["ADMIN", "REP"] },
   { href: "/clients", label: "clients", icon: UsersIcon, roles: ["ADMIN", "REP"] },
+  { href: "/market", label: "market", icon: MarketIcon, roles: ["ADMIN", "REP"] },
   { href: "/products", label: "products", icon: BoxIcon, roles: ["ADMIN", "REP"], desktopOnly: true },
   { href: "/users", label: "users", icon: ShieldIcon, roles: ["ADMIN"], desktopOnly: true },
-  { href: "/profile", label: "profile", icon: PersonIcon, roles: ["ADMIN", "REP", "CLIENT"] },
+  // On the phone, the profile is the icon at the top so the market fits in the bottom bar.
+  { href: "/profile", label: "profile", icon: PersonIcon, roles: ["ADMIN", "REP", "CLIENT"], desktopOnly: true },
 ];
 
 const isActive = (pathname: string, href: string) =>
@@ -87,9 +89,14 @@ export function AppShell({ children }: { children: ReactNode }) {
       <div className="flex min-w-0 flex-1 flex-col">
         <header className="flex items-center justify-between bg-brand-900 px-4 py-3 text-white md:hidden print:hidden">
           <span className="font-bold">{t("appName")}</span>
-          <button onClick={() => setLocale(locale === "ar" ? "en" : "ar")} className="min-h-11 px-2 text-sm">
-            {locale === "ar" ? "EN" : "ع"}
-          </button>
+          <div className="flex items-center gap-1">
+            <button onClick={() => setLocale(locale === "ar" ? "en" : "ar")} className="min-h-11 px-2 text-sm">
+              {locale === "ar" ? "EN" : "ع"}
+            </button>
+            <Link href="/profile" aria-label={t("profile")} className="flex min-h-11 min-w-11 items-center justify-center">
+              <PersonIcon />
+            </Link>
+          </div>
         </header>
         <main className="mx-auto w-full max-w-6xl flex-1 p-4 pb-24 md:p-6">
           {isLoading ? <Muted>{t("loading")}</Muted> : children}

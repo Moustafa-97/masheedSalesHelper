@@ -17,13 +17,22 @@ export const UNIT_EN: Record<Unit, string> = {
   TRAILER: "Trailer",
 };
 
-/** The template's terms; payment follows the client's account (credit or cash). */
-export function defaultTerms({ credit, validityDays = 7 }: { credit: boolean; validityDays?: number }) {
+/** How the payment line reads on the PDF: "Cash" or "Credit 45 days". */
+export const paymentText = (creditDays: number) => (creditDays > 0 ? `Credit ${creditDays} days` : "Cash");
+
+/** Puts the payment terms into terms already written (adds the line if it was deleted). */
+export function withPayment(terms: string, creditDays: number) {
+  const line = `- Payment: ${paymentText(creditDays)}.`;
+  return /^- *Payment:.*$/m.test(terms) ? terms.replace(/^- *Payment:.*$/m, line) : `${terms.trimEnd()}\n${line}`;
+}
+
+/** The template's terms, with the quotation's payment terms (cash or credit days). */
+export function defaultTerms({ creditDays, validityDays = 7 }: { creditDays: number; validityDays?: number }) {
   return [
     "- The above shown prices are eligible to change in case of any future increase or decrease from Cement or Steel manufacturers or Transportation cost.",
     "- Delivery: Delivered As Agreed, upon order confirmation to your factory.",
     '- Availability: available "Conditioned to prior sale and/or purchase Confirmation by the customer".',
-    `- Payment: ${credit ? "Credit" : "Cash"}.`,
+    `- Payment: ${paymentText(creditDays)}.`,
     `- Price Validity: ${validityDays} day.`,
   ].join("\n");
 }
