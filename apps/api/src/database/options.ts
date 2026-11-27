@@ -14,6 +14,7 @@ import {
   SalesInvoice,
   StoredFile,
 } from '../orders/order.entities.js';
+import { Quotation, QuotationLine } from '../quotations/quotation.entities.js';
 import { Brand, Product, ProductVariant, VariantZone } from '../products/product.entities.js';
 import { User } from '../users/user.entity.js';
 
@@ -35,6 +36,8 @@ export const entities = [
   Payment,
   OrderEvent,
   ClientGuarantee,
+  Quotation,
+  QuotationLine,
 ];
 
 /**

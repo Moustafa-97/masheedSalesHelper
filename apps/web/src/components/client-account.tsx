@@ -5,7 +5,8 @@ import clsx from "clsx";
 import Link from "next/link";
 import { useState, type FormEvent } from "react";
 import { api } from "@/lib/api";
-import { useOrders, usePayments, useProjects } from "@/lib/hooks";
+import { useAcceptedPrices, useOrders, usePayments, useProjects, useQuotations, useVariants } from "@/lib/hooks";
+import { quoteTone } from "@/lib/quotation";
 import { useI18n } from "@/lib/i18n";
 import { fileUrl, formatMoney, today, uploadFile } from "@/lib/orders";
 import type { Client, ClientProject, Payment, PaymentMethod } from "@/lib/types";
@@ -274,12 +275,64 @@ function ClientOrders({ client }: { client: Client }) {
   );
 }
 
+function ClientQuotations({ client }: { client: Client }) {
+  const { t } = useI18n();
+  const { data: list = [] } = useQuotations({ clientId: client.id });
+  const { data: prices = [] } = useAcceptedPrices(client.id);
+  const { data: variants = [] } = useVariants();
+  const names = new Map(variants.map((v) => [v.id, [v.product.name, v.brand?.name].filter(Boolean).join(" — ")]));
+  return (
+    <Card className="flex flex-col gap-3">
+      <div className="flex items-center justify-between">
+        <h2 className="font-bold">{t("clientQuotations")}</h2>
+        <Link href={`/quotations/new?clientId=${client.id}`}>
+          <Button className="min-h-9">+ {t("newQuotation")}</Button>
+        </Link>
+      </div>
+      {!list.length && <p className="text-sm text-muted">{t("noQuotations")}</p>}
+      <ul className="divide-y divide-line">
+        {list.map((q) => (
+          <li key={q.id}>
+            <Link href={`/quotations/${q.id}`} className="flex flex-wrap items-center justify-between gap-2 py-2 hover:bg-brand-50">
+              <span className="flex min-w-0 items-center gap-2">
+                <bdi className="font-semibold">{q.number}</bdi>
+                <Badge tone={quoteTone(q.status)}>{t(`qStatus.${q.status}`)}</Badge>
+                <span className="truncate text-sm text-muted">{q.items.join("، ")}</span>
+              </span>
+              <span className="text-sm text-muted">
+                <bdi>{q.date}</bdi> · <bdi className="font-semibold text-ink">{formatMoney(q.totals.total)}</bdi>
+              </span>
+            </Link>
+          </li>
+        ))}
+      </ul>
+      {prices.length > 0 && (
+        <div className="flex flex-col gap-1 border-t border-line pt-3">
+          <h3 className="text-sm font-bold">{t("acceptedPrices")}</h3>
+          <ul className="divide-y divide-line text-sm">
+            {prices.map((p) => (
+              <li key={p.variantId} className="flex flex-wrap items-center justify-between gap-2 py-1.5">
+                <span>{names.get(p.variantId) ?? p.name}</span>
+                <span className="text-xs text-muted">
+                  <bdi className="text-sm font-bold text-ink">{formatMoney(p.unitPrice)}</bdi> / {t(`unit.${p.unit}`)} ·{" "}
+                  <Link href={`/quotations/${p.quotationId}`} className="underline"><bdi>{p.number}</bdi></Link> · <bdi>{p.acceptedAt}</bdi>
+                </span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </Card>
+  );
+}
+
 /** Everything about the client's business with us: account, projects, payments, orders. */
 export function ClientAccountPanel({ client }: { client: Client }) {
   return (
     <div className="mt-4 grid gap-4 lg:grid-cols-2">
       <div className="lg:col-span-2"><CreditPanel clientId={client.id} /></div>
       <div className="lg:col-span-2"><ClientOrders client={client} /></div>
+      <div className="lg:col-span-2"><ClientQuotations client={client} /></div>
       <Payments clientId={client.id} />
       <Guarantees clientId={client.id} />
       <Projects clientId={client.id} />

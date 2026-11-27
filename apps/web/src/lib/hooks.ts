@@ -14,6 +14,9 @@ import type {
   OrdersSummary,
   Statement,
   Payment,
+  AcceptedPrice,
+  Quotation,
+  QuotationSummary,
   Product,
   User,
   Variant,
@@ -94,3 +97,16 @@ export const useCredit = (clientId: string) =>
 
 export const useGuarantees = (clientId: string) =>
   useQuery({ queryKey: ["guarantees", clientId], queryFn: () => api<Guarantee[]>(`/clients/${clientId}/guarantees`) });
+
+export const useQuotations = (filters: { clientId?: string; status?: string; q?: string } = {}) =>
+  useQuery({ queryKey: ["quotations", filters], queryFn: () => api<QuotationSummary[]>(`/quotations${query(filters)}`) });
+
+export const useQuotation = (id: string) =>
+  useQuery({ queryKey: ["quotations", id], queryFn: () => api<Quotation>(`/quotations/${id}`) });
+
+export const useAcceptedPrices = (clientId: string | undefined) =>
+  useQuery({
+    queryKey: ["accepted-prices", clientId],
+    queryFn: () => api<AcceptedPrice[]>(`/clients/${clientId}/accepted-prices`),
+    enabled: !!clientId,
+  });

@@ -15,7 +15,9 @@ Sales tracking for reps: clients and credit limits, products, orders, collection
 
 **Credit:** payments by transfer, cash, cheque or LC (a cheque or LC counts as paid once collected; an approved cheque, 100% unless stated, and a payment LC raise the available credit until then); a guarantees section per client (e-promissory notes, LCs, LGs, cheques, credit approved without a guarantee) with coverage of the limit, guarantee cheques / LCs adding approved credit, and bounced guarantee cheques flagged until replaced; statement of account (screen, print, Excel); receivables aging with payments applied oldest first; average collection days; new orders stop when an amount is past due for longer than the client's overdue-stop days (default 30, 0 = off) unless management approval is recorded; dashboard with receivables, overdue and near-limit clients, and cheques and guarantees to follow up.
 
-Next: collections, cheques, guarantees and email alerts → quotations with PDF export → lost deals and market prices → client portal → admin dashboard and deployment.
+**Phase 3 (quotations):** quotations saved per client and numbered by the client's code (`B2B-722-00001`, `NEW-00001` for a client without one); a new client can be added from the quotation and is kept under "new clients"; each line has the name the client reads ("Rajhi 12-32") linked to one or more catalogue items; draft → sent → accepted / lost (with reason and competitor price); accepted prices become the client's latest accepted prices and prefill the next order; PDF export laid out like Masheed's template, named "Quotation <date>" unless renamed (browser print → Save as PDF).
+
+Next: lost deals and market prices → email alerts → client portal → admin dashboard and deployment.
 
 ## Run it on Windows
 

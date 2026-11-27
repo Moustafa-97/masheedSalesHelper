@@ -8,7 +8,7 @@ import { api } from "@/lib/api";
 import { useMe } from "@/lib/hooks";
 import { useI18n, type MessageKey } from "@/lib/i18n";
 import type { Role } from "@/lib/types";
-import { BoxIcon, HomeIcon, LogoutIcon, OrdersIcon, PersonIcon, ShieldIcon, UsersIcon } from "./icons";
+import { BoxIcon, HomeIcon, LogoutIcon, OrdersIcon, PersonIcon, QuoteIcon, ShieldIcon, UsersIcon } from "./icons";
 import { Muted } from "./ui";
 
 type NavItem = {
@@ -23,8 +23,9 @@ type NavItem = {
 const NAV: NavItem[] = [
   { href: "/", label: "home", icon: HomeIcon, roles: ["ADMIN", "REP"] },
   { href: "/orders", label: "orders", icon: OrdersIcon, roles: ["ADMIN", "REP"] },
+  { href: "/quotations", label: "quotations", icon: QuoteIcon, roles: ["ADMIN", "REP"] },
   { href: "/clients", label: "clients", icon: UsersIcon, roles: ["ADMIN", "REP"] },
-  { href: "/products", label: "products", icon: BoxIcon, roles: ["ADMIN", "REP"] },
+  { href: "/products", label: "products", icon: BoxIcon, roles: ["ADMIN", "REP"], desktopOnly: true },
   { href: "/users", label: "users", icon: ShieldIcon, roles: ["ADMIN"], desktopOnly: true },
   { href: "/profile", label: "profile", icon: PersonIcon, roles: ["ADMIN", "REP", "CLIENT"] },
 ];
