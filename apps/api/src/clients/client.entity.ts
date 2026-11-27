@@ -52,9 +52,16 @@ export class Client {
   @Column({ type: 'varchar', length: 20, nullable: true })
   vatNumber: string | null;
 
-  /** Credit period added to the invoice date to get the due date (30/45/60). */
+  /** Credit period added to the order date to get the due date (30/45/60). 0 = cash. */
   @Column({ type: 'int', default: 0 })
   paymentTermsDays: number;
+
+  /**
+   * New orders stop when an amount is more than this many days past due.
+   * Null uses the default (30); 0 turns the stop off for this client.
+   */
+  @Column({ type: 'int', nullable: true })
+  overdueStopDays: number | null;
 
   @Column({
     type: 'numeric',

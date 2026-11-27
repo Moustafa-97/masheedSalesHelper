@@ -23,6 +23,7 @@ type FormState = {
   paymentTermsDays: string;
   creditLimit: string;
   openingBalance: string;
+  overdueStopDays: string;
   repId: string;
 };
 
@@ -40,6 +41,7 @@ const fromClient = (c?: Client): FormState => ({
   notes: c?.notes ?? "",
   paymentTermsDays: String(c?.paymentTermsDays ?? 0),
   creditLimit: String(c?.creditLimit ?? 0),
+  overdueStopDays: c?.overdueStopDays === null || c?.overdueStopDays === undefined ? "" : String(c.overdueStopDays),
   openingBalance: String(c?.openingBalance ?? 0),
   repId: c?.repId ?? "",
 });
@@ -64,6 +66,7 @@ function toPayload(f: FormState, isAdmin: boolean, original?: Client) {
     body.paymentTermsDays = Number(f.paymentTermsDays);
     body.creditLimit = Number(f.creditLimit || 0);
     body.openingBalance = Number(f.openingBalance || 0);
+    body.overdueStopDays = f.overdueStopDays.trim() === "" ? null : Number(f.overdueStopDays);
     if (f.repId && f.repId !== original?.repId) body.repId = f.repId;
   }
   return Object.fromEntries(Object.entries(body).filter(([, v]) => v !== undefined));
@@ -135,6 +138,18 @@ export function ClientForm({ client, onSaved }: { client?: Client; onSaved: (c: 
           ))}
         </Select>
         <Input label={t("openingBalance")} value={form.openingBalance} onChange={set("openingBalance")} type="number" step="0.01" disabled={!isAdmin} dir="ltr" />
+        <Input
+          label={t("overdueStopDays")}
+          hint={t("overdueStopHint")}
+          value={form.overdueStopDays}
+          onChange={set("overdueStopDays")}
+          type="number"
+          min={0}
+          max={365}
+          placeholder="30"
+          disabled={!isAdmin}
+          dir="ltr"
+        />
         {isAdmin && client && (
           <Select label={t("rep")} value={form.repId} onChange={set("repId")} className="sm:col-span-3">
             {reps.map((u) => (

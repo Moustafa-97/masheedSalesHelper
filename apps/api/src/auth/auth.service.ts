@@ -34,6 +34,7 @@ export class AuthService {
     const changes: Partial<User> = { ...dto };
     if (dto.email) changes.email = dto.email.toLowerCase();
     if (dto.phone) changes.phone = normalizePhone(dto.phone);
+    if (dto.supplyContactPhone) changes.supplyContactPhone = normalizePhone(dto.supplyContactPhone);
     await this.users.update({ id: user.id }, changes);
     return this.users.findOneByOrFail({ id: user.id });
   }

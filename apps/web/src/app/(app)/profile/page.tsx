@@ -17,6 +17,8 @@ function ProfileForm({ me }: { me: User }) {
     phone: me.phone ?? "",
     jobTitle: me.jobTitle ?? "",
     locale: me.locale,
+    supplyContactName: me.supplyContactName ?? "",
+    supplyContactPhone: me.supplyContactPhone ?? "",
   });
   const set = (k: keyof typeof f) => (e: { target: { value: string } }) => setF((s) => ({ ...s, [k]: e.target.value }));
 
@@ -44,6 +46,20 @@ function ProfileForm({ me }: { me: User }) {
       <Input label={t("jobTitle")} value={f.jobTitle} onChange={set("jobTitle")} />
       <Input label={t("email")} value={f.email} onChange={set("email")} type="email" dir="ltr" />
       <Input label={t("phone")} value={f.phone} onChange={set("phone")} dir="ltr" inputMode="tel" />
+      {me.role !== "CLIENT" && (
+        <fieldset className="flex flex-col gap-3 rounded-xl border border-line p-3">
+          <legend className="px-1 text-xs font-semibold text-muted">{t("supplyContact")}</legend>
+          <Input label={t("supplyContactName")} value={f.supplyContactName} onChange={set("supplyContactName")} />
+          <Input
+            label={t("supplyContactPhone")}
+            value={f.supplyContactPhone}
+            onChange={set("supplyContactPhone")}
+            dir="ltr"
+            inputMode="tel"
+            placeholder="05xxxxxxxx"
+          />
+        </fieldset>
+      )}
       <Select label={t("language")} value={f.locale} onChange={(e) => setF((s) => ({ ...s, locale: e.target.value as Locale }))}>
         <option value="ar">العربية</option>
         <option value="en">English</option>

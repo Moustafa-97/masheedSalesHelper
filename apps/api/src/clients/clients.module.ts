@@ -24,6 +24,7 @@ import {
   IsOptional,
   IsString,
   IsUUID,
+  Max,
   MaxLength,
   Min,
 } from 'class-validator';
@@ -49,6 +50,8 @@ class ClientFieldsDto {
   @IsOptional() @IsIn([0, 30, 45, 60, 90]) paymentTermsDays?: number;
   @IsOptional() @IsNumber({ maxDecimalPlaces: 2 }) @Min(0) creditLimit?: number;
   @IsOptional() @IsNumber({ maxDecimalPlaces: 2 }) openingBalance?: number;
+  /** Days past due before new orders stop; null = default (30), 0 = off. */
+  @IsOptional() @IsInt() @Min(0) @Max(365) overdueStopDays?: number | null;
   /** Admin only: which rep owns the client. Defaults to the creator. */
   @IsOptional() @IsUUID() repId?: string;
 }
@@ -67,7 +70,7 @@ export class ListClientsQuery {
   @IsOptional() @Type(() => Number) @IsInt() @Min(1) limit?: number;
 }
 
-const ADMIN_ONLY_FIELDS = ['paymentTermsDays', 'creditLimit', 'openingBalance', 'repId'] as const;
+const ADMIN_ONLY_FIELDS = ['paymentTermsDays', 'creditLimit', 'openingBalance', 'repId', 'overdueStopDays'] as const;
 
 @Injectable()
 export class ClientsService {

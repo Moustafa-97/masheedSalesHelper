@@ -39,6 +39,13 @@ export class User {
   @Column({ type: 'varchar', length: 120, nullable: true })
   jobTitle: string | null;
 
+  /** The rep's supply contact: new orders are sent to this person on WhatsApp. */
+  @Column({ type: 'varchar', length: 120, nullable: true })
+  supplyContactName: string | null;
+
+  @Column({ type: 'varchar', length: 20, nullable: true })
+  supplyContactPhone: string | null;
+
   /** For CLIENT users: the client account they belong to. */
   @Column({ type: 'uuid', nullable: true })
   clientId: string | null;

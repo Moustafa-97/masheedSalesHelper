@@ -17,6 +17,8 @@ export class UpdateProfileDto {
   @IsOptional() @IsString() @MaxLength(32) phone?: string;
   @IsOptional() @IsString() @MaxLength(120) jobTitle?: string;
   @IsOptional() @IsIn(['ar', 'en']) locale?: 'ar' | 'en';
+  @IsOptional() @IsString() @MaxLength(120) supplyContactName?: string;
+  @IsOptional() @IsString() @MaxLength(32) supplyContactPhone?: string;
 }
 
 export class ChangePasswordDto {
