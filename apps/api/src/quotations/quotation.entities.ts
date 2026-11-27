@@ -9,6 +9,7 @@ import {
   UpdateDateColumn,
 } from 'typeorm';
 import type { Client } from '../clients/client.entity.js';
+import { Competitor, LostReason } from '../market/market.entities.js';
 import { numericTransformer } from '../database/transformers.js';
 import { Unit } from '../products/product.entities.js';
 import type { User } from '../users/user.entity.js';
@@ -80,15 +81,28 @@ export class Quotation {
   @Column({ type: 'date', nullable: true })
   acceptedAt: string | null;
 
-  /** Why it was lost, and the competitor's price and name when known (feeds the lost deals). */
+  /** Payment terms the prices are given on: 0 = cash, otherwise credit days (prices differ by terms). */
+  @Column({ type: 'int', default: 0 })
+  creditDays: number;
+
+  /** LOST: the day, why (fixed reasons + a note), and who took it at what terms. */
+  @Column({ type: 'date', nullable: true })
+  lostAt: string | null;
+
+  @Column({ type: 'enum', enum: LostReason, enumName: 'lost_deals_reason_enum', nullable: true })
+  lostReasonCode: LostReason | null;
+
   @Column({ type: 'text', nullable: true })
   lostReason: string | null;
 
-  @Column({ type: 'varchar', length: 120, nullable: true })
-  competitor: string | null;
+  @Column({ type: 'uuid', nullable: true })
+  competitorId: string | null;
 
-  @Column({ type: 'numeric', precision: 12, scale: 2, nullable: true, transformer: numericTransformer })
-  competitorPrice: number | null;
+  @ManyToOne(() => Competitor, { onDelete: 'SET NULL', nullable: true })
+  competitor: Competitor | null;
+
+  @Column({ type: 'int', nullable: true })
+  competitorCreditDays: number | null;
 
   @Column({ type: 'uuid' })
   createdById: string;
@@ -140,4 +154,37 @@ export class QuotationLine {
   /** Excl. VAT */
   @Column({ type: 'numeric', precision: 12, scale: 2, transformer: numericTransformer })
   unitPrice: number;
+
+  /** LOST: the competitor's price for this line, when known (excl. VAT). */
+  @Column({ type: 'numeric', precision: 12, scale: 2, nullable: true, transformer: numericTransformer })
+  competitorPrice: number | null;
+}
+
+/** The quotation's history: created, edited, sent, accepted, lost (with the details), reopened. */
+@Entity('quotation_events')
+@Index(['quotationId', 'createdAt'])
+export class QuotationEvent {
+  @PrimaryGeneratedColumn('uuid')
+  id: string;
+
+  @Column({ type: 'uuid' })
+  quotationId: string;
+
+  @ManyToOne(() => Quotation, { onDelete: 'CASCADE' })
+  quotation: Quotation;
+
+  @Column({ type: 'uuid' })
+  userId: string;
+
+  @ManyToOne('User', { onDelete: 'RESTRICT' })
+  user: User;
+
+  @Column({ type: 'varchar', length: 40 })
+  type: string;
+
+  @Column({ type: 'jsonb', default: () => "'{}'" })
+  data: Record<string, unknown>;
+
+  @CreateDateColumn({ type: 'timestamptz' })
+  createdAt: Date;
 }

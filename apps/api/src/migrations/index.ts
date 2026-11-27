@@ -6,5 +6,6 @@ import { PaymentMethods1795625143093 } from './1795625143093-PaymentMethods.js';
 import { ChequeApproval1795625784083 } from './1795625784083-ChequeApproval.js';
 import { Guarantees1795627395114 } from './1795627395114-Guarantees.js';
 import { Quotations1795800599469 } from './1795800599469-Quotations.js';
+import { MarketPrices1795803021443 } from './1795803021443-MarketPrices.js';
 
-export const migrations = [Init1795287032185, ProductCatalogue1795293848418, Orders1795452385702, PaymentMethods1795625143093, ChequeApproval1795625784083, Guarantees1795627395114, Quotations1795800599469];
+export const migrations = [Init1795287032185, ProductCatalogue1795293848418, Orders1795452385702, PaymentMethods1795625143093, ChequeApproval1795625784083, Guarantees1795627395114, Quotations1795800599469, MarketPrices1795803021443];

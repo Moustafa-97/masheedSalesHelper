@@ -24,11 +24,13 @@ import {
   IsEmail,
   IsEnum,
   IsIn,
+  IsInt,
   IsNumber,
   IsOptional,
   IsString,
   IsUUID,
   MaxLength,
+  Max,
   Min,
   MinLength,
   ValidateNested,
@@ -36,11 +38,13 @@ import {
 import { Brackets, DataSource, EntityManager, In } from 'typeorm';
 import { Client } from '../clients/client.entity.js';
 import { CurrentUser, Roles } from '../common/auth.decorators.js';
+import { resolveCompetitor } from '../market/competitors.js';
+import { LostReason, MarketPrice, PriceSource } from '../market/market.entities.js';
 import { ClientProject } from '../orders/order.entities.js';
 import { ProductVariant, Unit } from '../products/product.entities.js';
 import { Role, User } from '../users/user.entity.js';
 import { isUniqueViolation } from '../users/users.module.js';
-import { Quotation, QuotationLine, QuotationStatus } from './quotation.entities.js';
+import { Quotation, QuotationEvent, QuotationLine, QuotationStatus } from './quotation.entities.js';
 
 /* ---------- DTOs ---------- */
 
@@ -56,6 +60,8 @@ export class QuotationDto {
   @IsUUID() clientId: string;
   @IsOptional() @IsUUID() projectId?: string | null;
   @IsDateString({ strict: true }) date: string;
+  /** 0 = cash, otherwise credit days; defaults to the client's payment terms. */
+  @IsOptional() @IsInt() @Min(0) @Max(365) creditDays?: number;
   @IsOptional() @IsString() @MaxLength(120) attn?: string | null;
   @IsOptional() @IsString() @MaxLength(40) phone?: string | null;
   @IsOptional() @IsEmail() @MaxLength(160) email?: string | null;
@@ -70,6 +76,7 @@ export class QuotationDto {
 export class UpdateQuotationDto {
   @IsOptional() @IsUUID() projectId?: string | null;
   @IsOptional() @IsDateString({ strict: true }) date?: string;
+  @IsOptional() @IsInt() @Min(0) @Max(365) creditDays?: number;
   @IsOptional() @IsString() @MaxLength(120) attn?: string | null;
   @IsOptional() @IsString() @MaxLength(40) phone?: string | null;
   @IsOptional() @IsEmail() @MaxLength(160) email?: string | null;
@@ -85,10 +92,19 @@ export class QuotationStatusDto {
   @IsEnum(QuotationStatus) status: QuotationStatus;
   /** ACCEPTED: the day the client accepted (defaults to today). */
   @IsOptional() @IsDateString({ strict: true }) acceptedAt?: string;
-  /** LOST: why, and the competitor's price when known. */
+  /** LOST: the day (defaults to today), why, and who took it at what price and terms. */
+  @IsOptional() @IsDateString({ strict: true }) lostAt?: string;
+  @IsOptional() @IsEnum(LostReason) lostReasonCode?: LostReason;
   @IsOptional() @IsString() @MaxLength(1000) lostReason?: string;
   @IsOptional() @IsString() @MaxLength(120) competitor?: string;
-  @IsOptional() @IsNumber({ maxDecimalPlaces: 2 }) @Min(0) competitorPrice?: number;
+  @IsOptional() @IsInt() @Min(0) @Max(365) competitorCreditDays?: number;
+  @IsOptional() @ValidateNested({ each: true }) @Type(() => LinePriceDto) @ArrayMaxSize(60)
+  linePrices?: LinePriceDto[];
+}
+
+export class LinePriceDto {
+  @IsUUID() lineId: string;
+  @IsNumber({ maxDecimalPlaces: 2 }) @Min(0) price: number;
 }
 
 export class ListQuotationsQuery {
@@ -114,6 +130,7 @@ export interface AcceptedPrice {
   unitPrice: number;
   unit: Unit;
   name: string;
+  creditDays: number;
   quotationId: string;
   number: string;
   acceptedAt: string;
@@ -163,6 +180,7 @@ export class QuotationsService {
       .createQueryBuilder('q')
       .innerJoinAndSelect('q.client', 'client')
       .innerJoinAndSelect('q.createdBy', 'createdBy')
+      .leftJoinAndSelect('q.competitor', 'competitor')
       .leftJoinAndSelect('q.lines', 'line')
       .where('q.id = :id', { id })
       .orderBy('line.position', 'ASC');
@@ -175,9 +193,11 @@ export class QuotationsService {
       ? await m.find(ProductVariant, { where: { id: In(ids) }, relations: { product: true, brand: true } })
       : [];
     const byId = new Map(variants.map((v) => [v.id, v]));
+    const events = await m.find(QuotationEvent, { where: { quotationId: q.id }, relations: { user: true }, order: { createdAt: 'ASC' } });
     const { createdBy: u, client: c, ...rest } = q;
     return {
       ...rest,
+      history: events.map((e) => ({ id: e.id, type: e.type, data: e.data, at: e.createdAt, by: e.user.name })),
       client: {
         id: c.id,
         name: c.name,
@@ -212,6 +232,7 @@ export class QuotationsService {
           clientId: client.id,
           projectId: dto.projectId ?? null,
           date: dto.date,
+          creditDays: dto.creditDays ?? client.paymentTermsDays,
           attn: clean(dto.attn),
           phone: clean(dto.phone),
           email: clean(dto.email),
@@ -223,6 +244,7 @@ export class QuotationsService {
         }),
       );
       await this.saveLines(m, q.id, dto.lines);
+      await this.event(m, q.id, user, 'CREATED', { number });
       return q.id;
     });
     return this.get(user, id);
@@ -247,27 +269,84 @@ export class QuotationsService {
         await m.delete(QuotationLine, { quotationId: id });
         await this.saveLines(m, id, lines);
       }
+      const changed = [...Object.keys(changes), ...(lines ? ['lines'] : [])];
+      if (changed.length) await this.event(m, id, user, 'EDITED', { fields: changed });
     });
     return this.get(user, id);
   }
 
   async setStatus(user: User, id: string, dto: QuotationStatusDto) {
     await this.write(async (m) => {
-      await this.get(user, id, m);
-      const changes: Partial<Quotation> = { status: dto.status };
-      if (dto.status === QuotationStatus.SENT) changes.sentAt = new Date();
-      changes.acceptedAt = dto.status === QuotationStatus.ACCEPTED ? (dto.acceptedAt ?? today()) : null;
+      const q = await this.get(user, id, m);
+      if (q.status === dto.status) throw new ConflictException('The quotation already has this status');
+      const changes: Partial<Quotation> = {
+        status: dto.status,
+        acceptedAt: null,
+        lostAt: null,
+        lostReasonCode: null,
+        lostReason: null,
+        competitorId: null,
+        competitorCreditDays: null,
+      };
+      if (dto.status === QuotationStatus.SENT && !q.sentAt) changes.sentAt = new Date();
+      if (dto.status === QuotationStatus.ACCEPTED) changes.acceptedAt = dto.acceptedAt ?? today();
+      await m.update(QuotationLine, { quotationId: id }, { competitorPrice: null });
+
+      let data: Record<string, unknown> = {};
       if (dto.status === QuotationStatus.LOST) {
-        if (!dto.lostReason?.trim()) throw new BadRequestException('Why was it lost?');
-        changes.lostReason = dto.lostReason.trim();
-        changes.competitor = dto.competitor?.trim() || null;
-        changes.competitorPrice = dto.competitorPrice ?? null;
-      } else {
-        changes.lostReason = null;
-        changes.competitor = null;
-        changes.competitorPrice = null;
+        if (!dto.lostReasonCode) throw new BadRequestException('Why was it lost?');
+        const note = dto.lostReason?.trim() || null;
+        if (dto.lostReasonCode === LostReason.OTHER && !note) throw new BadRequestException('Write the reason');
+        const competitor = await resolveCompetitor(m, dto.competitor, user.id);
+        const prices = new Map((dto.linePrices ?? []).map((p) => [p.lineId, p.price]));
+        if ([...prices.keys()].some((lineId) => !q.lines.some((l) => l.id === lineId))) {
+          throw new BadRequestException("A price is for a line that isn't on this quotation");
+        }
+        Object.assign(changes, {
+          lostAt: dto.lostAt ?? today(),
+          lostReasonCode: dto.lostReasonCode,
+          lostReason: note,
+          competitorId: competitor?.id ?? null,
+          competitorCreditDays: dto.competitorCreditDays ?? q.creditDays,
+        });
+        for (const [lineId, price] of prices) await m.update(QuotationLine, { id: lineId }, { competitorPrice: price });
+        // Their prices go to the market prices; a quotation lost again replaces what it wrote before.
+        await m.delete(MarketPrice, { quotationId: id });
+        const heard = q.lines.filter((l) => prices.has(l.id));
+        if (heard.length) {
+          await m.save(
+            heard.map((l) =>
+              m.create(MarketPrice, {
+                date: changes.lostAt!,
+                name: l.name,
+                variantIds: l.variantIds,
+                unit: l.unit,
+                price: prices.get(l.id)!,
+                creditDays: changes.competitorCreditDays!,
+                competitorId: changes.competitorId,
+                source: PriceSource.LOST_QUOTATION,
+                quotationId: id,
+                notes: null,
+                createdById: user.id,
+              }),
+            ),
+          );
+        }
+        data = {
+          reason: dto.lostReasonCode,
+          note,
+          competitor: competitor?.name ?? null,
+          competitorCreditDays: changes.competitorCreditDays,
+          prices: heard.map((l) => ({ name: l.name, ours: l.unitPrice, theirs: prices.get(l.id) })),
+        };
       }
+      if (dto.status === QuotationStatus.ACCEPTED) data = { acceptedAt: changes.acceptedAt };
       await m.update(Quotation, { id }, changes);
+      const reopened = q.status === QuotationStatus.ACCEPTED || q.status === QuotationStatus.LOST;
+      await this.event(m, id, user, reopened && dto.status !== QuotationStatus.LOST && dto.status !== QuotationStatus.ACCEPTED ? 'REOPENED' : dto.status, {
+        from: q.status,
+        ...data,
+      });
     });
     return this.get(user, id);
   }
@@ -279,6 +358,7 @@ export class QuotationsService {
       clientId: q.clientId,
       projectId: q.projectId,
       date: today(),
+      creditDays: q.creditDays,
       attn: q.attn,
       phone: q.phone,
       email: q.email,
@@ -294,7 +374,7 @@ export class QuotationsService {
     await this.clientFor(user, clientId);
     return this.dataSource.query(
       `SELECT DISTINCT ON (v) v AS "variantId", l."unitPrice"::float AS "unitPrice", l.unit, l.name,
-              q.id AS "quotationId", q.number, to_char(q."acceptedAt", 'YYYY-MM-DD') AS "acceptedAt"
+              q."creditDays", q.id AS "quotationId", q.number, to_char(q."acceptedAt", 'YYYY-MM-DD') AS "acceptedAt"
          FROM quotations q
          JOIN quotation_lines l ON l."quotationId" = q.id
          CROSS JOIN LATERAL unnest(l."variantIds") AS v
@@ -305,6 +385,10 @@ export class QuotationsService {
   }
 
   /* ---------- Helpers ---------- */
+
+  private event(m: EntityManager, quotationId: string, user: User, type: string, data: Record<string, unknown> = {}) {
+    return m.save(m.create(QuotationEvent, { quotationId, userId: user.id, type, data }));
+  }
 
   private async write<T>(work: (m: EntityManager) => Promise<T>): Promise<T> {
     // A clash on the number (two quotations at once) is retried once with the next number.
@@ -420,7 +504,7 @@ export class QuotationsController {
 }
 
 @Module({
-  imports: [TypeOrmModule.forFeature([Quotation, QuotationLine])],
+  imports: [TypeOrmModule.forFeature([Quotation, QuotationLine, QuotationEvent])],
   controllers: [QuotationsController],
   providers: [QuotationsService],
 })

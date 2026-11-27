@@ -126,10 +126,29 @@ describe('Quotations (e2e)', () => {
   it('records why a quotation was lost, and duplicates it as a new draft', async () => {
     const lostOne = (await as(rep).post('/quotations', quote(prospect, [rajhi(2790)]))).body;
     await as(rep).put(`/quotations/${lostOne.id}/status`, { status: 'LOST' }).expect(400);
+    await as(rep).put(`/quotations/${lostOne.id}/status`, { status: 'LOST', lostReasonCode: 'OTHER' }).expect(400); // OTHER needs a note
     const lost = await as(rep)
-      .put(`/quotations/${lostOne.id}/status`, { status: 'LOST', lostReason: 'Cheaper elsewhere', competitor: 'Factory direct', competitorPrice: 2720 })
+      .put(`/quotations/${lostOne.id}/status`, {
+        status: 'LOST',
+        lostReasonCode: 'PRICE',
+        lostReason: 'Cheaper elsewhere',
+        competitor: 'Factory  direct',
+        competitorCreditDays: 0,
+        linePrices: [{ lineId: lostOne.lines[0].id, price: 2720 }],
+      })
       .expect(200);
-    expect(lost.body).toMatchObject({ status: 'LOST', competitorPrice: 2720 });
+    expect(lost.body).toMatchObject({ status: 'LOST', lostReasonCode: 'PRICE', competitor: { name: 'Factory direct' }, competitorCreditDays: 0 });
+    expect(lost.body.lines[0].competitorPrice).toBe(2720);
+    expect(lost.body.history.map((e: { type: string }) => e.type)).toEqual(['CREATED', 'LOST']);
+
+    // Reopened when the client comes back: the lost details stay in the history.
+    const reopened = await as(rep).put(`/quotations/${lostOne.id}/status`, { status: 'SENT' }).expect(200);
+    expect(reopened.body).toMatchObject({ status: 'SENT', lostReasonCode: null, competitorId: null });
+    expect(reopened.body.history.at(-1)).toMatchObject({ type: 'REOPENED', data: { from: 'LOST' } });
+    expect(reopened.body.history.at(-2).data).toMatchObject({ reason: 'PRICE', competitor: 'Factory direct', prices: [{ ours: 2790, theirs: 2720 }] });
+    await as(rep)
+      .put(`/quotations/${lostOne.id}/status`, { status: 'LOST', lostReasonCode: 'PRICE', competitor: 'factory direct' })
+      .expect(200);
     expect((await as(rep).get(`/clients/${prospect}/accepted-prices`)).body).toEqual([]);
 
     const copy = await as(rep).post(`/quotations/${lostOne.id}/duplicate`).expect(201);
