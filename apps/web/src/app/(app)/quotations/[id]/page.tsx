@@ -6,35 +6,78 @@ import { useParams, useRouter } from "next/navigation";
 import { useState, type FormEvent } from "react";
 import { isolate } from "@/components/credit-panel";
 import { Stat } from "@/components/order-bits";
-import { Badge, Button, Card, Input, Muted, Notice, PageHeader } from "@/components/ui";
+import { CompetitorInput, TermsSelect, useTerms } from "@/components/market-bits";
+import { Badge, Button, Card, Input, Muted, Notice, PageHeader, Select } from "@/components/ui";
 import { api } from "@/lib/api";
 import { useQuotation } from "@/lib/hooks";
 import { useI18n } from "@/lib/i18n";
 import { formatMoney, formatQty, today } from "@/lib/orders";
 import { defaultPdfName, quoteTone } from "@/lib/quotation";
-import type { Quotation, QuotationStatus } from "@/lib/types";
+import { LOST_REASONS } from "@/lib/market";
+import type { LostReason, Quotation, QuotationStatus } from "@/lib/types";
 
-function LostForm({ onSubmit, onCancel }: { onSubmit: (body: { status: "LOST" } & Record<string, unknown>) => Promise<unknown>; onCancel: () => void }) {
+function LostForm({
+  q,
+  onSubmit,
+  onCancel,
+}: {
+  q: Quotation;
+  onSubmit: (body: { status: "LOST" } & Record<string, unknown>) => Promise<unknown>;
+  onCancel: () => void;
+}) {
   const { t } = useI18n();
-  const [lostReason, setReason] = useState("");
+  const [lostAt, setLostAt] = useState(today());
+  const [reason, setReason] = useState<LostReason | "">("");
+  const [note, setNote] = useState("");
   const [competitor, setCompetitor] = useState("");
-  const [competitorPrice, setPrice] = useState("");
+  const [theirTerms, setTheirTerms] = useState(q.creditDays);
+  const [prices, setPrices] = useState<Record<string, string>>({});
   const [error, setError] = useState<string | null>(null);
   const submit = (e: FormEvent) => {
     e.preventDefault();
     onSubmit({
       status: "LOST" as const,
-      lostReason,
+      lostAt,
+      lostReasonCode: reason,
+      lostReason: note || undefined,
       competitor: competitor || undefined,
-      competitorPrice: competitorPrice === "" ? undefined : Number(competitorPrice),
+      competitorCreditDays: theirTerms,
+      linePrices: Object.entries(prices)
+        .filter(([, v]) => v.trim() !== "")
+        .map(([lineId, v]) => ({ lineId, price: Number(v) })),
     }).catch((err: Error) => setError(err.message));
   };
   return (
-    <form onSubmit={submit} className="grid gap-2 rounded-xl bg-danger-bg p-3 md:grid-cols-3">
-      <Input label={t("reason")} value={lostReason} onChange={(e) => setReason(e.target.value)} required className="md:col-span-3" />
-      <Input label={t("competitor")} hint={t("optional")} value={competitor} onChange={(e) => setCompetitor(e.target.value)} />
-      <Input label={t("competitorPrice")} hint={t("optional")} value={competitorPrice} onChange={(e) => setPrice(e.target.value)} type="number" step="any" min={0} dir="ltr" />
-      <div className="flex items-end gap-2">
+    <form onSubmit={submit} className="grid gap-3 rounded-xl bg-danger-bg p-3 md:grid-cols-3">
+      <Select label={t("reason")} value={reason} onChange={(e) => setReason(e.target.value as LostReason)} required>
+        <option value="">—</option>
+        {LOST_REASONS.map((r) => <option key={r} value={r}>{t(`lostReason.${r}`)}</option>)}
+      </Select>
+      <Input label={t("note")} hint={reason === "OTHER" ? undefined : t("optional")} value={note} onChange={(e) => setNote(e.target.value)} required={reason === "OTHER"} className="md:col-span-2" />
+      <CompetitorInput label={t("competitor")} value={competitor} onChange={setCompetitor} />
+      <TermsSelect label={t("theirTerms")} value={theirTerms} onChange={setTheirTerms} />
+      <Input label={t("date")} type="date" value={lostAt} onChange={(e) => setLostAt(e.target.value)} required />
+      <div className="flex flex-col gap-2 md:col-span-3">
+        <p className="text-xs text-muted">{t("theirPricesHint")}</p>
+        {q.lines.map((l) => (
+          <div key={l.id} className="grid grid-cols-[1fr_9rem] items-end gap-2">
+            <div className="text-sm">
+              <div className="font-semibold">{l.name}</div>
+              <div className="text-xs text-muted">{t("ourPrice")}: <bdi>{formatMoney(l.unitPrice)}</bdi></div>
+            </div>
+            <Input
+              label={t("competitorPrice")}
+              value={prices[l.id] ?? ""}
+              onChange={(e) => setPrices((p) => ({ ...p, [l.id]: e.target.value }))}
+              type="number"
+              step="any"
+              min={0}
+              dir="ltr"
+            />
+          </div>
+        ))}
+      </div>
+      <div className="flex gap-2 md:col-span-3">
         <Button type="submit" variant="danger">{t("confirm")}</Button>
         <Button type="button" variant="secondary" onClick={onCancel}>{t("cancel")}</Button>
       </div>
@@ -43,8 +86,44 @@ function LostForm({ onSubmit, onCancel }: { onSubmit: (body: { status: "LOST" } 
   );
 }
 
+function History({ q }: { q: Quotation }) {
+  const { t } = useI18n();
+  const terms = useTerms();
+  if (!q.history.length) return null;
+  return (
+    <Card className="flex flex-col gap-2">
+      <h2 className="font-bold">{t("history")}</h2>
+      <ol className="flex flex-col gap-2 text-sm">
+        {q.history.map((e) => (
+          <li key={e.id} className="border-s-2 border-line ps-3">
+            <div className="flex flex-wrap gap-x-2">
+              <span className="font-semibold">{t(`qEvent.${e.type}` as "qEvent.CREATED")}</span>
+              <span className="text-xs text-muted"><bdi>{new Date(e.at).toLocaleString("en-GB", { dateStyle: "short", timeStyle: "short" })}</bdi> · {e.by}</span>
+            </div>
+            {e.type === "LOST" && (
+              <div className="text-xs text-muted">
+                {e.data.reason && t(`lostReason.${e.data.reason}`)}
+                {e.data.note && ` — ${e.data.note}`}
+                {e.data.competitor && ` · ${e.data.competitor}`}
+                {e.data.competitorCreditDays !== undefined && ` (${terms(e.data.competitorCreditDays)})`}
+                {e.data.prices?.map((p) => (
+                  <div key={p.name}>
+                    {p.name}: {t("ourPrice")} <bdi>{formatMoney(p.ours)}</bdi> · {t("competitorPrice")} <bdi>{formatMoney(p.theirs)}</bdi>
+                  </div>
+                ))}
+              </div>
+            )}
+            {e.type === "ACCEPTED" && e.data.acceptedAt && <div className="text-xs text-muted"><bdi>{e.data.acceptedAt}</bdi></div>}
+          </li>
+        ))}
+      </ol>
+    </Card>
+  );
+}
+
 export default function QuotationPage() {
   const { t } = useI18n();
+  const terms = useTerms();
   const router = useRouter();
   const qc = useQueryClient();
   const { id } = useParams<{ id: string }>();
@@ -62,6 +141,10 @@ export default function QuotationPage() {
       qc.setQueryData(["quotations", id], next);
       qc.invalidateQueries({ queryKey: ["quotations"] });
       qc.invalidateQueries({ queryKey: ["accepted-prices", q.clientId] });
+      qc.invalidateQueries({ queryKey: ["market-prices"] });
+      qc.invalidateQueries({ queryKey: ["lost-deals"] });
+      qc.invalidateQueries({ queryKey: ["market-analysis"] });
+      qc.invalidateQueries({ queryKey: ["competitors"] });
       setLosing(false);
     } catch (e) {
       setError((e as Error).message);
@@ -109,9 +192,10 @@ export default function QuotationPage() {
         {q.status === "ACCEPTED" && q.acceptedAt && <Notice tone="ok">{t("acceptedOn", { date: isolate(q.acceptedAt) })}</Notice>}
         {q.status === "LOST" && (
           <Notice>
-            {t("lostBecause", { reason: q.lostReason ?? "" })}
-            {q.competitor && ` · ${t("competitor")}: ${q.competitor}`}
-            {q.competitorPrice !== null && <> · {t("competitorPrice")}: <bdi>{formatMoney(q.competitorPrice)}</bdi></>}
+            {t("lostBecause", { reason: [q.lostReasonCode && t(`lostReason.${q.lostReasonCode}`), q.lostReason].filter(Boolean).join(" — ") })}
+            {q.lostAt && <> · <bdi>{q.lostAt}</bdi></>}
+            {q.competitor && ` · ${t("competitor")}: ${q.competitor.name}`}
+            {q.competitorCreditDays !== null && ` (${terms(q.competitorCreditDays)})`}
           </Notice>
         )}
         <div className="flex flex-wrap items-end gap-2">
@@ -125,7 +209,7 @@ export default function QuotationPage() {
           )}
           {!open && <Button variant="ghost" onClick={() => setStatus({ status: "SENT" }).catch(() => undefined)}>{t("reopen")}</Button>}
         </div>
-        {losing && <LostForm onSubmit={setStatus} onCancel={() => setLosing(false)} />}
+        {losing && <LostForm q={q} onSubmit={setStatus} onCancel={() => setLosing(false)} />}
         {q.status === "ACCEPTED" && (
           <div className="flex flex-wrap gap-2 border-t border-line pt-3">
             {q.client.status === "PROSPECT" && <Button variant="secondary" onClick={activate}>{t("activateClient")}</Button>}
@@ -144,6 +228,7 @@ export default function QuotationPage() {
           <Link href={`/clients/${q.clientId}`} className="text-brand-700 underline">{q.client.name}</Link>
         </Stat>
         <Stat label={t("date")}>{q.date}</Stat>
+        <Stat label={t("paymentTerms")}>{terms(q.creditDays)}</Stat>
         <Stat label={t("attn")}>{q.attn ?? "—"}</Stat>
         <Stat label={t("clientRef")}>{q.reference ?? "—"}</Stat>
         {q.project && <Stat label={t("project")}>{q.project.name}</Stat>}
@@ -163,6 +248,9 @@ export default function QuotationPage() {
                   <bdi className="font-bold">{formatMoney(l.qty * l.unitPrice)}</bdi>
                 </span>
               </div>
+              {l.competitorPrice !== null && (
+                <p className="text-xs text-danger">{t("competitorPrice")}: <bdi>{formatMoney(l.competitorPrice)}</bdi></p>
+              )}
               {l.items.length > 0 && (
                 <div className="flex flex-wrap gap-1 text-xs">
                   {l.items.map((i) => <span key={i.id} className="rounded-lg bg-brand-50 px-2 py-0.5 text-brand-800">{i.name}</span>)}
@@ -183,6 +271,8 @@ export default function QuotationPage() {
         <p className="whitespace-pre-line text-sm" dir="ltr">{q.terms}</p>
         {q.notes && <p className="whitespace-pre-line border-t border-line pt-2 text-sm text-muted">{q.notes}</p>}
       </Card>
+
+      <History q={q} />
     </div>
   );
 }

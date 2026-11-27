@@ -17,7 +17,9 @@ Sales tracking for reps: clients and credit limits, products, orders, collection
 
 **Phase 3 (quotations):** quotations saved per client and numbered by the client's code (`B2B-722-00001`, `NEW-00001` for a client without one); a new client can be added from the quotation and is kept under "new clients"; each line has the name the client reads ("Rajhi 12-32") linked to one or more catalogue items; draft → sent → accepted / lost (with reason and competitor price); accepted prices become the client's latest accepted prices and prefill the next order; PDF export laid out like Masheed's template, named "Quotation <date>" unless renamed (browser print → Save as PDF).
 
-Next: lost deals and market prices → email alerts → client portal → admin dashboard and deployment.
+**Phase 4 (market):** every price carries its payment terms (cash or credit days: 2,750 cash and 2,830 on 45 days are different prices), quotations included; a competitors list added to as you go (spelling case doesn't matter; the admin can rename or merge two names); a quotation is lost with a fixed reason (price, payment terms, delivery, availability, relationship, other), the competitor, their terms and their price per line, and can be reopened with the details kept in its history; lost deals without a quotation; market prices from the market, clients or suppliers, with the lost deals' prices added automatically; an analysis page (our latest accepted price against the latest and lowest market price at the same terms, lost value by month, reason and competitor, quotation win rate); the latest market price shown under prices while quoting or ordering. Reps see their own market data; the admin sees everyone's.
+
+Next: email alerts → client portal → admin dashboard and deployment.
 
 ## Run it on Windows
 

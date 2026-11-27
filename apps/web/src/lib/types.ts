@@ -438,14 +438,130 @@ export interface Quotation {
   notes: string | null;
   sentAt: string | null;
   acceptedAt: string | null;
+  /** 0 = cash, otherwise credit days. */
+  creditDays: number;
+  lostAt: string | null;
+  lostReasonCode: LostReason | null;
   lostReason: string | null;
-  competitor: string | null;
-  competitorPrice: number | null;
+  competitorId: string | null;
+  competitor: { id: string; name: string } | null;
+  competitorCreditDays: number | null;
+  history: QuotationEventView[];
   client: { id: string; name: string; code: string | null; status: ClientStatus; creditLimit: number; paymentTermsDays: number };
   project: { id: string; name: string } | null;
   createdBy: { id: string; name: string; jobTitle: string | null; phone: string | null; email: string | null };
-  lines: (QuotationLine & { id: string; items: { id: string; name: string; unit: Unit }[] })[];
+  lines: (QuotationLine & { id: string; items: { id: string; name: string; unit: Unit }[]; competitorPrice: number | null })[];
   totals: Totals;
+}
+
+export interface QuotationEventView {
+  id: string;
+  type: "CREATED" | "EDITED" | "SENT" | "ACCEPTED" | "LOST" | "REOPENED" | "DRAFT";
+  data: {
+    from?: QuotationStatus;
+    fields?: string[];
+    acceptedAt?: string;
+    reason?: LostReason;
+    note?: string | null;
+    competitor?: string | null;
+    competitorCreditDays?: number;
+    prices?: { name: string; ours: number; theirs: number }[];
+  };
+  at: string;
+  by: string;
+}
+
+export type LostReason = "PRICE" | "PAYMENT_TERMS" | "DELIVERY" | "AVAILABILITY" | "RELATIONSHIP" | "OTHER";
+export type PriceSource = "CLIENT" | "SUPPLIER" | "MARKET" | "LOST_QUOTATION" | "LOST_DEAL";
+
+export interface Competitor {
+  id: string;
+  name: string;
+  uses?: number;
+}
+
+export interface LostEntry {
+  kind: "QUOTATION" | "DEAL";
+  id: string;
+  date: string;
+  number: string | null;
+  client: { id: string | null; name: string };
+  items: string[];
+  value: number;
+  reason: LostReason;
+  note: string | null;
+  competitor: { id: string; name: string } | null;
+  creditDays: number;
+  competitorCreditDays: number;
+  prices: { name: string; unit: Unit; qty: number; ours: number | null; theirs: number | null }[];
+  createdBy: string;
+}
+
+export interface LostDealLine {
+  name: string;
+  variantIds: string[];
+  unit: Unit;
+  qty: number;
+  ourPrice: number | null;
+  competitorPrice: number | null;
+}
+
+export interface LostDealDetail extends LostEntry {
+  zone: string | null;
+  lines: LostDealLine[];
+}
+
+export interface MarketPrice {
+  id: string;
+  date: string;
+  name: string;
+  variantIds: string[];
+  unit: Unit;
+  price: number;
+  creditDays: number;
+  competitor: { id: string; name: string } | null;
+  zone: string | null;
+  source: PriceSource;
+  quotation: { id: string; number: string } | null;
+  lostDealId: string | null;
+  notes: string | null;
+  createdBy: string;
+  automatic: boolean;
+}
+
+export interface LatestMarketPrice {
+  variantId: string;
+  price: number;
+  creditDays: number;
+  date: string;
+  unit: Unit;
+  competitor: string | null;
+  zone: string | null;
+  source: PriceSource;
+}
+
+export interface MarketAnalysis {
+  from: string;
+  to: string;
+  items: {
+    variantId: string | null;
+    name: string;
+    unit: Unit;
+    creditDays: number;
+    market: { price: number; date: string; competitor: string | null };
+    lowest: { price: number; date: string; competitor: string | null };
+    count: number;
+    ours: { price: number; date: string; client: string; number: string } | null;
+    diffPct: number | null;
+  }[];
+  lost: {
+    count: number;
+    value: number;
+    byMonth: { key: string; count: number; value: number }[];
+    byReason: { key: LostReason; count: number; value: number }[];
+    byCompetitor: { key: string; count: number; value: number }[];
+  };
+  quotations: { won: number; lost: number; wonValue: number; lostValue: number; winRate: number | null };
 }
 
 export interface AcceptedPrice {
@@ -453,6 +569,7 @@ export interface AcceptedPrice {
   unitPrice: number;
   unit: Unit;
   name: string;
+  creditDays: number;
   quotationId: string;
   number: string;
   acceptedAt: string;

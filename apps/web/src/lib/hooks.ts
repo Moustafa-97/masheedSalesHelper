@@ -20,6 +20,12 @@ import type {
   Product,
   User,
   Variant,
+  Competitor,
+  LatestMarketPrice,
+  LostDealDetail,
+  LostEntry,
+  MarketAnalysis,
+  MarketPrice,
 } from "./types";
 
 export const useMe = () => useQuery({ queryKey: ["me"], queryFn: () => api<User>("/auth/me") });
@@ -110,3 +116,30 @@ export const useAcceptedPrices = (clientId: string | undefined) =>
     queryFn: () => api<AcceptedPrice[]>(`/clients/${clientId}/accepted-prices`),
     enabled: !!clientId,
   });
+
+export const useCompetitors = () => useQuery({ queryKey: ["competitors"], queryFn: () => api<Competitor[]>("/competitors") });
+
+export type RangeFilters = { from?: string; to?: string };
+
+export const useLostDeals = (filters: RangeFilters & { reason?: string; competitorId?: string }) =>
+  useQuery({ queryKey: ["lost-deals", filters], queryFn: () => api<LostEntry[]>(`/lost-deals${query(filters)}`) });
+
+export const useLostDeal = (id: string | undefined) =>
+  useQuery({ queryKey: ["lost-deals", id], queryFn: () => api<LostDealDetail>(`/lost-deals/${id}`), enabled: !!id });
+
+export const useMarketPrices = (filters: RangeFilters & { variantId?: string; competitorId?: string; q?: string }) =>
+  useQuery({ queryKey: ["market-prices", filters], queryFn: () => api<MarketPrice[]>(`/market-prices${query(filters)}`) });
+
+/** The latest market prices for these items (one per payment terms): the hint under a price. */
+export const useLatestMarket = (variantIds: string[]) => {
+  const ids = [...new Set(variantIds)].sort();
+  return useQuery({
+    queryKey: ["market-prices", "latest", ids.join(",")],
+    queryFn: () => api<LatestMarketPrice[]>(`/market-prices/latest?variantIds=${ids.join(",")}`),
+    enabled: ids.length > 0,
+    staleTime: 60_000,
+  });
+};
+
+export const useMarketAnalysis = (filters: RangeFilters) =>
+  useQuery({ queryKey: ["market-analysis", filters], queryFn: () => api<MarketAnalysis>(`/market/analysis${query(filters)}`) });
