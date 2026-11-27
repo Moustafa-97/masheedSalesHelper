@@ -497,6 +497,18 @@ const ar = {
   "lostByReason": "الضايع حسب السبب",
   "lostByCompetitor": "الضايع حسب المنافس",
   "unknownCompetitor": "منافس مش معروف",
+  "acceptDate": "تاريخ الموافقة",
+  "fixAcceptDate": "صحّح تاريخ الموافقة",
+  "actuallyAccepted": "الحقيقة العميل وافق",
+  "actuallyLost": "الحقيقة اتخسر",
+  "editLostDetails": "عدّل تفاصيل الخسارة",
+  "correctionsHint": "لو اخترت حالة غلط صحّحها من هنا. كل تصحيح بيتسجل في السجل وبيتحدّث في التحليل.",
+  "editingClosed": "العرض ده {status}. أي تعديل هيتسجل في السجل (قبل وبعد) وهيتحدّث في الأسعار المعتمدة والتحليل.",
+  "lostDetailsFixed": "اتعدّلت تفاصيل الخسارة",
+  "acceptDateFixed": "اتصحح تاريخ الموافقة",
+  "wasStatus": "(كانت: {status})",
+  "editedWhile": "اتعدّل وهو {status}",
+  "changedField": "{field} اتغيّر",
 } as const;
 
 export type MessageKey = keyof typeof ar;
@@ -995,6 +1007,18 @@ const en: Record<MessageKey, string> = {
   "lostByReason": "Lost by reason",
   "lostByCompetitor": "Lost by competitor",
   "unknownCompetitor": "Unknown competitor",
+  "acceptDate": "Acceptance date",
+  "fixAcceptDate": "Fix the acceptance date",
+  "actuallyAccepted": "Actually accepted",
+  "actuallyLost": "Actually lost",
+  "editLostDetails": "Edit the loss details",
+  "correctionsHint": "Picked the wrong status? Correct it here. Every correction is kept in the history and updates the analysis.",
+  "editingClosed": "This quotation is {status}. Every change is kept in the history (before and after) and updates the accepted prices and the analysis.",
+  "lostDetailsFixed": "Loss details corrected",
+  "acceptDateFixed": "Acceptance date corrected",
+  "wasStatus": "(was: {status})",
+  "editedWhile": "Edited while {status}",
+  "changedField": "{field} changed",
 };
 
 const dictionaries: Record<Locale, Record<MessageKey, string>> = { ar, en };

@@ -21,6 +21,8 @@ const num = (s: string) => (s.trim() === "" ? NaN : Number(s));
 
 interface Line {
   key: number;
+  /** Set for a line already saved: its changes are tracked line by line. */
+  id?: string;
   name: string;
   variantIds: string[];
   unit: Unit;
@@ -179,7 +181,7 @@ export function QuotationForm({ initial, presetClientId }: { initial?: Quotation
   const [notes, setNotes] = useState(initial?.notes ?? "");
   const [allPrice, setAllPrice] = useState("");
   const [lines, setLines] = useState<Line[]>(
-    initial?.lines.map((l) => ({ key: ++seq, name: l.name, variantIds: l.variantIds, unit: l.unit, qty: String(l.qty), unitPrice: String(l.unitPrice) })) ?? [blank()],
+    initial?.lines.map((l) => ({ key: ++seq, id: l.id, name: l.name, variantIds: l.variantIds, unit: l.unit, qty: String(l.qty), unitPrice: String(l.unitPrice) })) ?? [blank()],
   );
 
   /** Choosing a client fills the contact and the payment term (credit or cash) unless already typed. */
@@ -212,7 +214,7 @@ export function QuotationForm({ initial, presetClientId }: { initial?: Quotation
         terms: terms || defaultTerms({ creditDays }),
         pdfName: pdfName || null,
         notes: notes || null,
-        lines: lines.map((l) => ({ name: l.name, variantIds: l.variantIds, unit: l.unit, qty: num(l.qty), unitPrice: num(l.unitPrice) })),
+        lines: lines.map((l) => ({ id: l.id, name: l.name, variantIds: l.variantIds, unit: l.unit, qty: num(l.qty), unitPrice: num(l.unitPrice) })),
       };
       return initial
         ? api<Quotation>(`/quotations/${initial.id}`, { method: "PATCH", body })
@@ -221,6 +223,7 @@ export function QuotationForm({ initial, presetClientId }: { initial?: Quotation
     onSuccess: (q) => {
       qc.invalidateQueries({ queryKey: ["quotations"] });
       qc.invalidateQueries({ queryKey: ["accepted-prices"] });
+      for (const key of ["market-prices", "market-analysis", "lost-deals"]) qc.invalidateQueries({ queryKey: [key] });
       router.push(`/quotations/${q.id}`);
     },
   });
@@ -233,6 +236,9 @@ export function QuotationForm({ initial, presetClientId }: { initial?: Quotation
 
   return (
     <form onSubmit={submit} className="flex flex-col gap-4">
+      {initial && (initial.status === "ACCEPTED" || initial.status === "LOST") && (
+        <Notice tone="warn">{t("editingClosed", { status: t(`qStatus.${initial.status}`) })}</Notice>
+      )}
       <Card className="grid gap-3 md:grid-cols-2">
         {initial ? (
           <Stat label={t("client")}>{initial.client.name}</Stat>

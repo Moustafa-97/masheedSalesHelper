@@ -10,7 +10,7 @@ import { CompetitorInput, TermsSelect, useTerms } from "@/components/market-bits
 import { Badge, Button, Card, Input, Muted, Notice, PageHeader, Select } from "@/components/ui";
 import { api } from "@/lib/api";
 import { useQuotation } from "@/lib/hooks";
-import { useI18n } from "@/lib/i18n";
+import { useI18n, type MessageKey } from "@/lib/i18n";
 import { formatMoney, formatQty, today } from "@/lib/orders";
 import { defaultPdfName, quoteTone } from "@/lib/quotation";
 import { LOST_REASONS } from "@/lib/market";
@@ -26,12 +26,15 @@ function LostForm({
   onCancel: () => void;
 }) {
   const { t } = useI18n();
-  const [lostAt, setLostAt] = useState(today());
-  const [reason, setReason] = useState<LostReason | "">("");
-  const [note, setNote] = useState("");
-  const [competitor, setCompetitor] = useState("");
-  const [theirTerms, setTheirTerms] = useState(q.creditDays);
-  const [prices, setPrices] = useState<Record<string, string>>({});
+  // Already lost: the form opens with the recorded details, to correct them.
+  const [lostAt, setLostAt] = useState(q.lostAt ?? today());
+  const [reason, setReason] = useState<LostReason | "">(q.lostReasonCode ?? "");
+  const [note, setNote] = useState(q.lostReason ?? "");
+  const [competitor, setCompetitor] = useState(q.competitor?.name ?? "");
+  const [theirTerms, setTheirTerms] = useState(q.competitorCreditDays ?? q.creditDays);
+  const [prices, setPrices] = useState<Record<string, string>>(
+    Object.fromEntries(q.lines.filter((l) => l.competitorPrice !== null).map((l) => [l.id, String(l.competitorPrice)])),
+  );
   const [error, setError] = useState<string | null>(null);
   const submit = (e: FormEvent) => {
     e.preventDefault();
@@ -86,36 +89,114 @@ function LostForm({
   );
 }
 
+type Diff = [unknown, unknown];
+const FIELD_KEYS: Record<string, MessageKey> = {
+  date: "date",
+  creditDays: "paymentTerms",
+  attn: "attn",
+  phone: "phone",
+  email: "email",
+  reference: "clientRef",
+  projectId: "project",
+  terms: "terms",
+  pdfName: "pdfName",
+  notes: "notes",
+};
+const LINE_KEYS: Record<string, MessageKey> = { name: "lineName", unit: "unit", qty: "qty", unitPrice: "unitPrice", items: "linkedItems" };
+
+/** What changed, before → after, so the negotiation can be read back. */
 function History({ q }: { q: Quotation }) {
-  const { t } = useI18n();
+  const { t, dir } = useI18n();
+  const arrow = dir === "rtl" ? "←" : "→";
   const terms = useTerms();
   if (!q.history.length) return null;
+  const show = (k: string, v: unknown) =>
+    v === null || v === undefined || v === ""
+      ? "—"
+      : k === "creditDays"
+        ? terms(Number(v))
+        : k === "unitPrice"
+          ? formatMoney(Number(v))
+          : k === "unit"
+            ? t(`unit.${v}` as "unit.TON")
+            : String(v);
+  const change = (k: string, [a, b]: Diff, label: string) =>
+    a === null && b === null ? (
+      <div key={k}>{t("changedField", { field: label })}</div>
+    ) : (
+      <div key={k}>
+        {label}: <bdi className="line-through">{show(k, a)}</bdi> {arrow} <bdi className="font-semibold text-ink">{show(k, b)}</bdi>
+      </div>
+    );
   return (
     <Card className="flex flex-col gap-2">
       <h2 className="font-bold">{t("history")}</h2>
-      <ol className="flex flex-col gap-2 text-sm">
-        {q.history.map((e) => (
-          <li key={e.id} className="border-s-2 border-line ps-3">
-            <div className="flex flex-wrap gap-x-2">
-              <span className="font-semibold">{t(`qEvent.${e.type}` as "qEvent.CREATED")}</span>
-              <span className="text-xs text-muted"><bdi>{new Date(e.at).toLocaleString("en-GB", { dateStyle: "short", timeStyle: "short" })}</bdi> · {e.by}</span>
-            </div>
-            {e.type === "LOST" && (
-              <div className="text-xs text-muted">
-                {e.data.reason && t(`lostReason.${e.data.reason}`)}
-                {e.data.note && ` — ${e.data.note}`}
-                {e.data.competitor && ` · ${e.data.competitor}`}
-                {e.data.competitorCreditDays !== undefined && ` (${terms(e.data.competitorCreditDays)})`}
-                {e.data.prices?.map((p) => (
-                  <div key={p.name}>
-                    {p.name}: {t("ourPrice")} <bdi>{formatMoney(p.ours)}</bdi> · {t("competitorPrice")} <bdi>{formatMoney(p.theirs)}</bdi>
-                  </div>
-                ))}
+      <ol className="flex flex-col gap-3 text-sm">
+        {q.history.map((e) => {
+          const correction = e.data.from && (e.data.from === "ACCEPTED" || e.data.from === "LOST");
+          return (
+            <li key={e.id} className="border-s-2 border-line ps-3">
+              <div className="flex flex-wrap gap-x-2">
+                <span className="font-semibold">
+                  {e.data.from === e.type ? t(e.type === "LOST" ? "lostDetailsFixed" : "acceptDateFixed") : t(`qEvent.${e.type}` as "qEvent.CREATED")}
+                </span>
+                {correction && e.data.from !== e.type && e.type !== "REOPENED" && (
+                  <span className="text-xs text-warn">{t("wasStatus", { status: t(`qStatus.${e.data.from!}`) })}</span>
+                )}
+                <span className="text-xs text-muted">
+                  <bdi>{new Date(e.at).toLocaleString("en-GB", { dateStyle: "short", timeStyle: "short" })}</bdi> · {e.by}
+                </span>
               </div>
-            )}
-            {e.type === "ACCEPTED" && e.data.acceptedAt && <div className="text-xs text-muted"><bdi>{e.data.acceptedAt}</bdi></div>}
-          </li>
-        ))}
+              <div className="flex flex-col text-xs text-muted">
+                {e.type === "LOST" && (
+                  <>
+                    <div>
+                      {e.data.reason && t(`lostReason.${e.data.reason}`)}
+                      {e.data.note && ` — ${e.data.note}`}
+                      {e.data.competitor && ` · ${e.data.competitor}`}
+                      {e.data.competitorCreditDays !== undefined && ` (${terms(e.data.competitorCreditDays)})`}
+                    </div>
+                    {e.data.prices?.map((p) => (
+                      <div key={p.name}>
+                        {p.name}: {t("ourPrice")} <bdi>{formatMoney(p.ours)}</bdi> · {t("competitorPrice")} <bdi>{formatMoney(p.theirs)}</bdi>
+                      </div>
+                    ))}
+                  </>
+                )}
+                {e.type === "ACCEPTED" && e.data.acceptedAt && (
+                  <div>
+                    {e.data.before && <><bdi className="line-through">{e.data.before}</bdi> {arrow} </>}
+                    <bdi>{e.data.acceptedAt}</bdi>
+                  </div>
+                )}
+                {e.type === "EDITED" && (
+                  <>
+                    {e.data.status && e.data.status !== "DRAFT" && e.data.status !== "SENT" && (
+                      <div className="text-warn">{t("editedWhile", { status: t(`qStatus.${e.data.status}`) })}</div>
+                    )}
+                    {Object.entries(Array.isArray(e.data.fields) ? {} : (e.data.fields ?? {})).map(([k, d]) => change(k, d, t(FIELD_KEYS[k] ?? "edit")))}
+                    {e.data.lines?.changed.map((l, i) => (
+                      <div key={`c${i}`} className="flex flex-col">
+                        <span className="font-semibold">{l.name}</span>
+                        <div className="ps-2">{Object.entries(l.changes).map(([k, d]) => change(k, d, t(LINE_KEYS[k] ?? "edit")))}</div>
+                      </div>
+                    ))}
+                    {e.data.lines?.added.map((l, i) => (
+                      <div key={`a${i}`} className="text-ok">
+                        + {l.name} · <bdi>{formatQty(l.qty)} {t(`unit.${l.unit}`)} × {formatMoney(l.unitPrice)}</bdi>
+                      </div>
+                    ))}
+                    {e.data.lines?.removed.map((l, i) => (
+                      <div key={`r${i}`} className="text-danger line-through">
+                        {l.name} · <bdi>{formatQty(l.qty)} {t(`unit.${l.unit}`)} × {formatMoney(l.unitPrice)}</bdi>
+                      </div>
+                    ))}
+                  </>
+                )}
+              </div>
+            </li>
+          );
+        })}
       </ol>
     </Card>
   );
@@ -129,7 +210,7 @@ export default function QuotationPage() {
   const { id } = useParams<{ id: string }>();
   const { data: q, isLoading } = useQuotation(id);
   const [losing, setLosing] = useState(false);
-  const [acceptDate, setAcceptDate] = useState(today());
+  const [acceptDateInput, setAcceptDate] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   if (isLoading || !q) return <Muted>{t("loading")}</Muted>;
@@ -162,6 +243,7 @@ export default function QuotationPage() {
     qc.invalidateQueries({ queryKey: ["clients"] });
   };
   const open = q.status === "DRAFT" || q.status === "SENT";
+  const acceptDate = acceptDateInput ?? q.acceptedAt ?? today();
   const pdfName = q.pdfName || defaultPdfName(q.date);
 
   return (
@@ -176,11 +258,9 @@ export default function QuotationPage() {
         <a href={`/print/quotations/${q.id}`} target="_blank" rel="noreferrer">
           <Button variant="accent">{t("exportPdf")}</Button>
         </a>
-        {open && (
-          <Link href={`/quotations/${q.id}/edit`}>
-            <Button variant="secondary">{t("edit")}</Button>
-          </Link>
-        )}
+        <Link href={`/quotations/${q.id}/edit`}>
+          <Button variant="secondary">{t("edit")}</Button>
+        </Link>
         <Button variant="secondary" onClick={duplicate}>{t("duplicate")}</Button>
         <p className="w-full text-xs text-muted">
           {t("printHint")} · <bdi className="font-semibold">{pdfName}.pdf</bdi>
@@ -200,15 +280,22 @@ export default function QuotationPage() {
         )}
         <div className="flex flex-wrap items-end gap-2">
           {q.status === "DRAFT" && <Button variant="secondary" onClick={() => setStatus({ status: "SENT" }).catch(() => undefined)}>{t("markSent")}</Button>}
-          {open && (
-            <>
-              <Input label={t("date")} type="date" value={acceptDate} onChange={(e) => setAcceptDate(e.target.value)} className="w-44" />
-              <Button onClick={() => setStatus({ status: "ACCEPTED", acceptedAt: acceptDate }).catch(() => undefined)}>✓ {t("markAccepted")}</Button>
-              {!losing && <Button variant="ghost" onClick={() => setLosing(true)}>{t("markLost")}</Button>}
-            </>
+          <Input label={t("acceptDate")} type="date" value={acceptDate} onChange={(e) => setAcceptDate(e.target.value)} className="w-44" />
+          <Button
+            variant={q.status === "ACCEPTED" ? "secondary" : "primary"}
+            disabled={q.status === "ACCEPTED" && acceptDate === q.acceptedAt}
+            onClick={() => setStatus({ status: "ACCEPTED", acceptedAt: acceptDate }).catch(() => undefined)}
+          >
+            {q.status === "ACCEPTED" ? t("fixAcceptDate") : `✓ ${t(q.status === "LOST" ? "actuallyAccepted" : "markAccepted")}`}
+          </Button>
+          {!losing && (
+            <Button variant="ghost" onClick={() => setLosing(true)}>
+              {t(q.status === "LOST" ? "editLostDetails" : q.status === "ACCEPTED" ? "actuallyLost" : "markLost")}
+            </Button>
           )}
           {!open && <Button variant="ghost" onClick={() => setStatus({ status: "SENT" }).catch(() => undefined)}>{t("reopen")}</Button>}
         </div>
+        {!open && <p className="text-xs text-muted">{t("correctionsHint")}</p>}
         {losing && <LostForm q={q} onSubmit={setStatus} onCancel={() => setLosing(false)} />}
         {q.status === "ACCEPTED" && (
           <div className="flex flex-wrap gap-2 border-t border-line pt-3">

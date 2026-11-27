@@ -120,7 +120,6 @@ describe('Quotations (e2e)', () => {
     const byVariant = Object.fromEntries(prices.map((p: { variantId: string; unitPrice: number }) => [p.variantId, p.unitPrice]));
     expect(byVariant).toEqual({ [r12]: 2740, [r16]: 2700, [r32]: 2740 });
 
-    await as(rep).patch(`/quotations/${first}`, { notes: 'x' }).expect(409); // closed
   });
 
   it('records why a quotation was lost, and duplicates it as a new draft', async () => {
@@ -154,5 +153,71 @@ describe('Quotations (e2e)', () => {
     const copy = await as(rep).post(`/quotations/${lostOne.id}/duplicate`).expect(201);
     expect(copy.body).toMatchObject({ status: 'DRAFT', number: 'NEW-00003', attn: 'Eng. AbdulRahim' });
     expect(copy.body.lines[0]).toMatchObject({ name: 'Rajhi 12-32', unitPrice: 2790 });
+  });
+
+  it('corrects a wrong status and edits a closed quotation, keeping every change in the history', async () => {
+    const q = (await as(rep).post('/quotations', quote(coded, [rajhi(2800), { name: 'Cement', unit: 'BAG', qty: 500, unitPrice: 14 }]))).body;
+    // Marked accepted by mistake: it was lost on price.
+    await as(rep).put(`/quotations/${q.id}/status`, { status: 'ACCEPTED', acceptedAt: '2026-11-20' }).expect(200);
+    const lost = await as(rep)
+      .put(`/quotations/${q.id}/status`, {
+        status: 'LOST',
+        lostReasonCode: 'PRICE',
+        competitor: 'Factory direct',
+        linePrices: [{ lineId: q.lines[0].id, price: 2760 }],
+      })
+      .expect(200);
+    expect(lost.body.status).toBe('LOST');
+    const accepted = (await as(rep).get(`/clients/${coded}/accepted-prices`)).body;
+    expect(accepted.every((a: { quotationId: string }) => a.quotationId !== q.id)).toBe(true);
+
+    // The lost details are fixed afterwards (lost again keeps the status and replaces the details).
+    await as(rep)
+      .put(`/quotations/${q.id}/status`, {
+        status: 'LOST',
+        lostReasonCode: 'PAYMENT_TERMS',
+        competitor: 'Factory direct',
+        competitorCreditDays: 90,
+        linePrices: [{ lineId: q.lines[0].id, price: 2780 }],
+      })
+      .expect(200);
+    let market = (await as(admin).get('/market-prices')).body.filter((p: { quotation: { id: string } | null }) => p.quotation?.id === q.id);
+    expect(market.map((p: { price: number; creditDays: number }) => [p.price, p.creditDays])).toEqual([[2780, 90]]);
+
+    // The client came back with a counter-offer: edit the lost quotation, line by line.
+    const edited = await as(rep)
+      .patch(`/quotations/${q.id}`, {
+        creditDays: 30,
+        lines: [
+          { ...rajhi(2770), id: q.lines[0].id, name: 'Rajhi 12-32 (revised)' },
+          { name: 'Wire', unit: 'KG', qty: 50, unitPrice: 6 },
+        ],
+      })
+      .expect(200);
+    expect(edited.body.lines[0]).toMatchObject({ id: q.lines[0].id, unitPrice: 2770, competitorPrice: 2780 });
+    const ev = edited.body.history.at(-1);
+    expect(ev).toMatchObject({
+      type: 'EDITED',
+      data: {
+        status: 'LOST',
+        fields: { creditDays: [60, 30] },
+        lines: {
+          added: [{ name: 'Wire', unitPrice: 6 }],
+          removed: [{ name: 'Cement', unitPrice: 14 }],
+          changed: [{ name: 'Rajhi 12-32 (revised)', changes: { name: ['Rajhi 12-32', 'Rajhi 12-32 (revised)'], unitPrice: [2800, 2770] } }],
+        },
+      },
+    });
+    market = (await as(admin).get('/market-prices')).body.filter((p: { quotation: { id: string } | null }) => p.quotation?.id === q.id);
+    expect(market.map((p: { name: string }) => p.name)).toEqual(['Rajhi 12-32 (revised)']);
+
+    // Finally they accepted: the acceptance date can be fixed too.
+    await as(rep).put(`/quotations/${q.id}/status`, { status: 'ACCEPTED', acceptedAt: '2026-11-25' }).expect(200);
+    const fixed = await as(rep).put(`/quotations/${q.id}/status`, { status: 'ACCEPTED', acceptedAt: '2026-11-24' }).expect(200);
+    expect(fixed.body.acceptedAt).toBe('2026-11-24');
+    expect(fixed.body.history.map((e: { type: string }) => e.type)).toEqual(['CREATED', 'ACCEPTED', 'LOST', 'LOST', 'EDITED', 'ACCEPTED', 'ACCEPTED']);
+    expect(fixed.body.history.at(-1).data).toMatchObject({ from: 'ACCEPTED', acceptedAt: '2026-11-24', before: '2026-11-25' });
+    await as(rep).put(`/quotations/${q.id}/status`, { status: 'SENT' }).expect(200);
+    await as(rep).put(`/quotations/${q.id}/status`, { status: 'SENT' }).expect(409);
   });
 });

@@ -459,7 +459,15 @@ export interface QuotationEventView {
   type: "CREATED" | "EDITED" | "SENT" | "ACCEPTED" | "LOST" | "REOPENED" | "DRAFT";
   data: {
     from?: QuotationStatus;
-    fields?: string[];
+    /** EDITED: the status it had, the fields before → after (null, null for long texts), the lines. */
+    status?: QuotationStatus;
+    fields?: Record<string, [unknown, unknown]> | string[];
+    lines?: {
+      added: { name: string; qty: number; unit: Unit; unitPrice: number }[];
+      removed: { name: string; qty: number; unit: Unit; unitPrice: number }[];
+      changed: { name: string; changes: Record<string, [unknown, unknown]> }[];
+    };
+    before?: string | null;
     acceptedAt?: string;
     reason?: LostReason;
     note?: string | null;

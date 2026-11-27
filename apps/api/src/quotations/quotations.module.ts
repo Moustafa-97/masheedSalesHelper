@@ -49,6 +49,8 @@ import { Quotation, QuotationEvent, QuotationLine, QuotationStatus } from './quo
 /* ---------- DTOs ---------- */
 
 export class QuotationLineDto {
+  /** An existing line keeps its id, so its changes (and the competitor's price on it) are tracked. */
+  @IsOptional() @IsUUID() id?: string;
   @IsString() @MinLength(1) @MaxLength(200) name: string;
   @IsOptional() @IsArray() @ArrayMaxSize(50) @IsUUID('all', { each: true }) variantIds?: string[];
   @IsEnum(Unit) unit: Unit;
@@ -250,35 +252,83 @@ export class QuotationsService {
     return this.get(user, id);
   }
 
+  /**
+   * Any quotation can be edited, accepted and lost ones included (a wrong entry must not skew the
+   * analysis). Every change is kept in the history with its before and after, so the negotiation
+   * with the client can be followed price by price.
+   */
   async update(user: User, id: string, dto: UpdateQuotationDto) {
     await this.write(async (m) => {
       const q = await this.get(user, id, m);
-      if (q.status === QuotationStatus.ACCEPTED || q.status === QuotationStatus.LOST) {
-        throw new ConflictException('This quotation is closed; duplicate it to quote again');
-      }
       if (dto.projectId) await this.projectOf(m, q.clientId, dto.projectId);
       const { lines, ...fields } = dto;
-      const changes = Object.fromEntries(
-        Object.entries(fields)
-          .filter(([, v]) => v !== undefined)
-          .map(([k, v]) => [k, typeof v === 'string' ? (k === 'terms' ? v.trim() : clean(v)) : v]),
-      );
+      const changes: Record<string, unknown> = {};
+      const diff: Record<string, [unknown, unknown]> = {};
+      for (const [k, v] of Object.entries(fields)) {
+        if (v === undefined) continue;
+        const next = typeof v === 'string' ? (k === 'terms' ? v.trim() : clean(v)) : v;
+        const before = (q as unknown as Record<string, unknown>)[k] ?? null;
+        if (before === next) continue;
+        changes[k] = next;
+        // Long texts are logged as changed, without copying them into the history.
+        diff[k] = k === 'terms' || k === 'notes' ? [null, null] : [before, next];
+      }
       if (Object.keys(changes).length) await m.update(Quotation, { id }, changes);
+
+      let lineDiff: { added: object[]; removed: object[]; changed: object[] } | null = null;
       if (lines) {
         await this.checkVariants(m, lines);
-        await m.delete(QuotationLine, { quotationId: id });
-        await this.saveLines(m, id, lines);
+        const old = new Map(q.lines.map((l) => [l.id, l]));
+        if (lines.some((l) => l.id && !old.has(l.id))) throw new BadRequestException("A line isn't on this quotation");
+        const keep = new Set(lines.map((l) => l.id).filter(Boolean));
+        const removed = q.lines.filter((l) => !keep.has(l.id));
+        if (removed.length) await m.delete(QuotationLine, { id: In(removed.map((l) => l.id)) });
+        const added: object[] = [];
+        const changed: object[] = [];
+        for (const [i, l] of lines.entries()) {
+          const row = {
+            position: i,
+            name: l.name.trim(),
+            variantIds: [...new Set(l.variantIds ?? [])],
+            unit: l.unit,
+            qty: l.qty,
+            unitPrice: l.unitPrice,
+          };
+          const before = l.id ? old.get(l.id) : undefined;
+          if (!before) {
+            await m.save(m.create(QuotationLine, { ...row, quotationId: id }));
+            added.push({ name: row.name, qty: row.qty, unit: row.unit, unitPrice: row.unitPrice });
+            continue;
+          }
+          const c: Record<string, [unknown, unknown]> = {};
+          for (const k of ['name', 'unit', 'qty', 'unitPrice'] as const) if (before[k] !== row[k]) c[k] = [before[k], row[k]];
+          if ([...before.variantIds].sort().join() !== [...row.variantIds].sort().join()) c.items = [null, null];
+          await m.update(QuotationLine, { id: before.id }, row);
+          if (Object.keys(c).length) changed.push({ name: row.name, changes: c });
+        }
+        const gone = removed.map((l) => ({ name: l.name, qty: l.qty, unit: l.unit, unitPrice: l.unitPrice }));
+        if (added.length || gone.length || changed.length) lineDiff = { added, removed: gone, changed };
       }
-      const changed = [...Object.keys(changes), ...(lines ? ['lines'] : [])];
-      if (changed.length) await this.event(m, id, user, 'EDITED', { fields: changed });
+      if (Object.keys(diff).length || lineDiff) {
+        await this.event(m, id, user, 'EDITED', { status: q.status, fields: diff, ...(lineDiff && { lines: lineDiff }) });
+      }
+      // A lost quotation's market prices follow its lines (names, items, removed lines).
+      if (q.status === QuotationStatus.LOST) await this.syncLostPrices(m, id);
     });
     return this.get(user, id);
   }
 
+  /**
+   * Draft → sent → accepted / lost, and every correction: an accepted quotation can be marked lost
+   * (or the other way round) or reopened, and the acceptance date or the loss details can be fixed.
+   */
   async setStatus(user: User, id: string, dto: QuotationStatusDto) {
     await this.write(async (m) => {
       const q = await this.get(user, id, m);
-      if (q.status === dto.status) throw new ConflictException('The quotation already has this status');
+      const same = q.status === dto.status;
+      if (same && dto.status !== QuotationStatus.ACCEPTED && dto.status !== QuotationStatus.LOST) {
+        throw new ConflictException('The quotation already has this status');
+      }
       const changes: Partial<Quotation> = {
         status: dto.status,
         acceptedAt: null,
@@ -289,10 +339,14 @@ export class QuotationsService {
         competitorCreditDays: null,
       };
       if (dto.status === QuotationStatus.SENT && !q.sentAt) changes.sentAt = new Date();
-      if (dto.status === QuotationStatus.ACCEPTED) changes.acceptedAt = dto.acceptedAt ?? today();
+      let data: Record<string, unknown> = {};
+
+      if (dto.status === QuotationStatus.ACCEPTED) {
+        changes.acceptedAt = dto.acceptedAt ?? (same ? q.acceptedAt : null) ?? today();
+        data = { acceptedAt: changes.acceptedAt, ...(same && { before: q.acceptedAt }) };
+      }
       await m.update(QuotationLine, { quotationId: id }, { competitorPrice: null });
 
-      let data: Record<string, unknown> = {};
       if (dto.status === QuotationStatus.LOST) {
         if (!dto.lostReasonCode) throw new BadRequestException('Why was it lost?');
         const note = dto.lostReason?.trim() || null;
@@ -310,45 +364,51 @@ export class QuotationsService {
           competitorCreditDays: dto.competitorCreditDays ?? q.creditDays,
         });
         for (const [lineId, price] of prices) await m.update(QuotationLine, { id: lineId }, { competitorPrice: price });
-        // Their prices go to the market prices; a quotation lost again replaces what it wrote before.
-        await m.delete(MarketPrice, { quotationId: id });
-        const heard = q.lines.filter((l) => prices.has(l.id));
-        if (heard.length) {
-          await m.save(
-            heard.map((l) =>
-              m.create(MarketPrice, {
-                date: changes.lostAt!,
-                name: l.name,
-                variantIds: l.variantIds,
-                unit: l.unit,
-                price: prices.get(l.id)!,
-                creditDays: changes.competitorCreditDays!,
-                competitorId: changes.competitorId,
-                source: PriceSource.LOST_QUOTATION,
-                quotationId: id,
-                notes: null,
-                createdById: user.id,
-              }),
-            ),
-          );
-        }
         data = {
+          lostAt: changes.lostAt,
           reason: dto.lostReasonCode,
           note,
           competitor: competitor?.name ?? null,
           competitorCreditDays: changes.competitorCreditDays,
-          prices: heard.map((l) => ({ name: l.name, ours: l.unitPrice, theirs: prices.get(l.id) })),
+          prices: q.lines.filter((l) => prices.has(l.id)).map((l) => ({ name: l.name, ours: l.unitPrice, theirs: prices.get(l.id) })),
         };
       }
-      if (dto.status === QuotationStatus.ACCEPTED) data = { acceptedAt: changes.acceptedAt };
       await m.update(Quotation, { id }, changes);
-      const reopened = q.status === QuotationStatus.ACCEPTED || q.status === QuotationStatus.LOST;
-      await this.event(m, id, user, reopened && dto.status !== QuotationStatus.LOST && dto.status !== QuotationStatus.ACCEPTED ? 'REOPENED' : dto.status, {
-        from: q.status,
-        ...data,
-      });
+      // The competitor's prices go to the market prices; they're replaced on every change, and a
+      // quotation that is no longer lost keeps them (they're still what the market said that day).
+      if (dto.status === QuotationStatus.LOST) await this.syncLostPrices(m, id);
+
+      const closed = (s: QuotationStatus) => s === QuotationStatus.ACCEPTED || s === QuotationStatus.LOST;
+      const type = closed(q.status) && !closed(dto.status) ? 'REOPENED' : dto.status;
+      await this.event(m, id, user, type, { from: q.status, ...data });
     });
     return this.get(user, id);
+  }
+
+  /** Rewrites the market prices of a lost quotation from its lines' competitor prices. */
+  private async syncLostPrices(m: EntityManager, id: string) {
+    const q = await m.findOneOrFail(Quotation, { where: { id }, relations: { lines: true } });
+    await m.delete(MarketPrice, { quotationId: id });
+    const heard = q.lines.filter((l) => l.competitorPrice !== null);
+    if (!heard.length) return;
+    await m.save(
+      heard.map((l) =>
+        m.create(MarketPrice, {
+          date: q.lostAt ?? today(),
+          name: l.name,
+          variantIds: l.variantIds,
+          unit: l.unit,
+          price: l.competitorPrice!,
+          creditDays: q.competitorCreditDays ?? q.creditDays,
+          competitorId: q.competitorId,
+          source: PriceSource.LOST_QUOTATION,
+          quotationId: id,
+          notes: null,
+          // Kept under the quotation's rep, whoever corrected it, so the rep still sees it.
+          createdById: q.createdById,
+        }),
+      ),
+    );
   }
 
   /** A new draft with the same client, contacts, terms and lines, dated today. */
