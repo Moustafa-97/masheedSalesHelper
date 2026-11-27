@@ -395,3 +395,65 @@ export interface Guarantee {
   removedAt: string | null;
   removedReason: string | null;
 }
+
+/* ---------- Quotations ---------- */
+
+export type QuotationStatus = "DRAFT" | "SENT" | "ACCEPTED" | "LOST";
+
+export interface QuotationLine {
+  id?: string;
+  name: string;
+  variantIds: string[];
+  unit: Unit;
+  qty: number;
+  unitPrice: number;
+  items?: { id: string; name: string; unit: Unit }[];
+}
+
+export interface QuotationSummary {
+  id: string;
+  number: string;
+  date: string;
+  status: QuotationStatus;
+  client: { id: string; name: string; status: ClientStatus };
+  lines: number;
+  items: string[];
+  totals: Totals;
+}
+
+export interface Quotation {
+  id: string;
+  number: string;
+  clientId: string;
+  projectId: string | null;
+  date: string;
+  attn: string | null;
+  phone: string | null;
+  email: string | null;
+  reference: string | null;
+  status: QuotationStatus;
+  vatRate: number;
+  terms: string;
+  pdfName: string | null;
+  notes: string | null;
+  sentAt: string | null;
+  acceptedAt: string | null;
+  lostReason: string | null;
+  competitor: string | null;
+  competitorPrice: number | null;
+  client: { id: string; name: string; code: string | null; status: ClientStatus; creditLimit: number; paymentTermsDays: number };
+  project: { id: string; name: string } | null;
+  createdBy: { id: string; name: string; jobTitle: string | null; phone: string | null; email: string | null };
+  lines: (QuotationLine & { id: string; items: { id: string; name: string; unit: Unit }[] })[];
+  totals: Totals;
+}
+
+export interface AcceptedPrice {
+  variantId: string;
+  unitPrice: number;
+  unit: Unit;
+  name: string;
+  quotationId: string;
+  number: string;
+  acceptedAt: string;
+}

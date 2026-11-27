@@ -6,7 +6,7 @@ import { Suspense, useState, type FormEvent } from "react";
 import { ItemPicker, ProjectForm, Stat } from "@/components/order-bits";
 import { Button, Card, Input, Notice, PageHeader, Select, Textarea } from "@/components/ui";
 import { api, ApiError } from "@/lib/api";
-import { useAccount, useClients, useProjects, useVariants } from "@/lib/hooks";
+import { useAcceptedPrices, useAccount, useClients, useProjects, useVariants } from "@/lib/hooks";
 import { useI18n } from "@/lib/i18n";
 import { formatMoney, formatQty, today } from "@/lib/orders";
 import type { OrderDetail, Variant } from "@/lib/types";
@@ -49,6 +49,8 @@ function NewOrderForm() {
   const [bypassReason, setBypassReason] = useState("");
   const { data: projects = [] } = useProjects(clientId || undefined);
   const { data: account } = useAccount(clientId || undefined);
+  const { data: accepted = [] } = useAcceptedPrices(clientId || undefined);
+  const acceptedFor = (variantId: string) => accepted.find((a) => a.variantId === variantId);
 
   const update = (key: number, patch: Partial<DraftLine>) =>
     setLines((ls) => ls.map((l) => (l.key === key ? { ...l, ...patch } : l)));
@@ -58,7 +60,16 @@ function NewOrderForm() {
     if (!variant) return;
     setLines((ls) => [
       ...ls,
-      { key: Date.now(), variant, qty: variant.minQty ? String(variant.minQty) : "", unitPrice: allPrice, purchasePrice: allCost, color: "", belowMinReason: "" },
+      {
+        key: Date.now(),
+        variant,
+        qty: variant.minQty ? String(variant.minQty) : "",
+        // The client's last accepted price for this item, unless one price was set for all lines.
+        unitPrice: allPrice || (acceptedFor(variant.id) ? String(acceptedFor(variant.id)!.unitPrice) : ""),
+        purchasePrice: allCost,
+        color: "",
+        belowMinReason: "",
+      },
     ]);
     setPick("");
   };
@@ -201,6 +212,14 @@ function NewOrderForm() {
                       </div>
                     )}
                   </div>
+                  {acceptedFor(l.variant.id) && (
+                    <p className="text-xs text-ok">
+                      {t("acceptedPriceHint", {
+                        price: `\u2068${formatMoney(acceptedFor(l.variant.id)!.unitPrice)}\u2069`,
+                        number: `\u2068${acceptedFor(l.variant.id)!.number}\u2069`,
+                      })}
+                    </p>
+                  )}
                   {belowMin(l) && (
                     <div className="flex flex-col gap-1">
                       <Notice tone="warn">{t("belowMin", { min: `${formatQty(l.variant.minQty)} ${unit}` })}</Notice>

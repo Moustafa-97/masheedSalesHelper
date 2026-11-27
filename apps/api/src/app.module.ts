@@ -7,6 +7,7 @@ import { Public } from './common/auth.decorators.js';
 import { databaseOptions } from './database/options.js';
 import { OrdersModule } from './orders/orders.module.js';
 import { ProductsModule } from './products/products.module.js';
+import { QuotationsModule } from './quotations/quotations.module.js';
 import { UsersModule } from './users/users.module.js';
 
 @Controller('health')
@@ -33,6 +34,7 @@ class HealthController {
     ClientsModule,
     ProductsModule,
     OrdersModule,
+    QuotationsModule,
   ],
   controllers: [HealthController],
 })
